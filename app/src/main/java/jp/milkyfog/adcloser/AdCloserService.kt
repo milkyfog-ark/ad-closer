@@ -65,6 +65,8 @@ class AdCloserService : AccessibilityService() {
     private var consumedArmAt = 0L
     private var lastATapAt = 0L
     private var aTapCount = 0
+    private var lastCloseTapAt = 0L
+    private var closeTapCount = 0
     private var lastTopLeftTapAt = 0L
     private var topLeftStage = 0 // 0 = none, 1 = tried y=6%, 2 = tried y=3%, 3 = retried y=6%
     private var storeCloseCount = 0
@@ -187,6 +189,8 @@ class AdCloserService : AccessibilityService() {
         adStartAt = at
         lastATapAt = 0L
         aTapCount = 0
+        lastCloseTapAt = 0L
+        closeTapCount = 0
         lastTopLeftTapAt = 0L
         topLeftStage = 0
         storeCloseCount = 0
@@ -255,9 +259,20 @@ class AdCloserService : AccessibilityService() {
         val rewardReady = snap.has("報酬を獲得しました") || snap.has("Reward granted")
         val endCard = snap.has("インストール") || snap.has("Google Play") ||
             snap.has("Install")
+        // Pattern D (found 2026-11-11): an end card whose only close
+        // affordance is a labelled pill button "閉じる" at the top-left
+        // (about (10%, 6%)), with no reward text and no install text, so
+        // patterns A and B both missed it. The label is unambiguous, so
+        // tap the label's own bounds — but only in the top-left corner
+        // area, so a "閉じる" inside the game's own dialogs (usually
+        // centred) is never touched.
+        val closeBounds = snap.boundsOf("閉じる") ?: snap.boundsOf("Close")
+        val closeInCorner = closeBounds != null &&
+            closeBounds.centerY() < screenH() * 0.12 &&
+            closeBounds.centerX() < screenW() * 0.30
 
         if (!sessionActive) {
-            if (Prefs.resident(this) && (rewardReady || endCard)) {
+            if (Prefs.resident(this) && (rewardReady || endCard || closeInCorner)) {
                 startSession(now(), "広告画面を検知")
             }
             return
@@ -274,6 +289,16 @@ class AdCloserService : AccessibilityService() {
                 tap(0.932, 0.233, "ストアのシートの×")
                 return
             }
+        }
+
+        if (closeInCorner && Prefs.patternB(this)) {
+            noAdSignalSince = 0L
+            if (closeTapCount < 3 && now() - lastCloseTapAt > 3500) {
+                lastCloseTapAt = now()
+                closeTapCount++
+                tapRect(closeBounds!!, "パターンD：「閉じる」ボタン")
+            }
+            return
         }
 
         if (rewardReady) {
