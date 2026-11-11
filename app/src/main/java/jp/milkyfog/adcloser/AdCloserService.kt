@@ -280,16 +280,23 @@ class AdCloserService : AccessibilityService() {
             noAdSignalSince = 0L
             if (Prefs.patternA(this) && now() - lastATapAt > 4000) {
                 if (aTapCount >= 6) {
-                    endSession("右上の×を押せませんでした（手動で閉じてください）")
+                    endSession("報酬テキストの×を押せませんでした（手動で閉じてください）")
                     return
                 }
                 lastATapAt = now()
-                // The x sits at y≈6% on the Japanese card and y≈5% on the
-                // English one; alternate the two heights so a near miss
-                // does not repeat forever at the same spot.
+                // The reward pill is not always on the right: on
+                // 2026-11-11 the user hit an English card whose pill
+                // "✕ Reward granted" sits at the TOP-LEFT, and v0.4 kept
+                // tapping the empty top-right corner. Decide the side
+                // from where the reward text actually is, and alternate
+                // the two known heights (y≈6.1% / y≈4.6%) per side.
+                val rb = snap.boundsOf("報酬を獲得しました")
+                    ?: snap.boundsOf("Reward granted")
+                val onLeft = rb != null && rb.centerX() < screenW() / 2
+                val x = if (onLeft) 0.055 else 0.942
                 val y = if (aTapCount % 2 == 0) 0.061 else 0.046
                 aTapCount++
-                tap(0.942, y, "パターンA：報酬テキスト横の×")
+                tap(x, y, if (onLeft) "パターンA（左上）：報酬テキスト横の×" else "パターンA：報酬テキスト横の×")
             }
             return
         }
