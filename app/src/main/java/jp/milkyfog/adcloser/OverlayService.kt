@@ -4,7 +4,9 @@ import android.app.Service
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
@@ -33,6 +35,17 @@ class OverlayService : Service() {
     private var rootView: LinearLayout? = null
     private var params: WindowManager.LayoutParams? = null
     private var armButton: Button? = null
+    private var farmButton: Button? = null
+    private val refreshHandler = Handler(Looper.getMainLooper())
+    private val labelRefresh = object : Runnable {
+        override fun run() {
+            farmButton?.text = farmLabel()
+            refreshHandler.postDelayed(this, 1000)
+        }
+    }
+
+    private fun farmLabel(): String =
+        if (Prefs.farm(this)) "周回停止" else "周回開始"
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -93,16 +106,33 @@ class OverlayService : Service() {
                 LogStore.add(this@OverlayService, "フローティングボタンで手動開始")
             }
         }
+        farmButton = Button(this).apply {
+            text = farmLabel()
+            setOnClickListener {
+                val next = !Prefs.farm(this@OverlayService)
+                Prefs.setFarm(this@OverlayService, next)
+                text = farmLabel()
+                LogStore.add(
+                    this@OverlayService,
+                    if (next) "フローティングボタンで周回モードを開始" else "フローティングボタンで周回モードを停止"
+                )
+            }
+        }
         val stopButton = Button(this).apply {
-            text = "停止"
+            text = "全停止"
             setOnClickListener {
                 Control.emergencySuspend = true
                 Control.manualArmAt = 0L
+                Prefs.setFarm(this@OverlayService, false)
                 armButton?.text = "広告開始"
+                farmButton?.text = farmLabel()
+                LogStore.add(this@OverlayService, "フローティングボタンで全停止")
             }
         }
         layout.addView(armButton)
+        layout.addView(farmButton)
         layout.addView(stopButton)
+        refreshHandler.post(labelRefresh)
         rootView = layout
 
         val lp = WindowManager.LayoutParams(
@@ -166,6 +196,7 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        refreshHandler.removeCallbacks(labelRefresh)
         isRunning = false
         rootView?.let { runCatching { windowManager?.removeView(it) } }
         rootView = null

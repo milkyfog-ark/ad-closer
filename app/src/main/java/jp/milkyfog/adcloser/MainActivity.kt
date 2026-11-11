@@ -57,6 +57,7 @@ class MainActivity : Activity() {
         bindSwitch(R.id.swPatternA, { Prefs.patternA(this) }, { Prefs.setPatternA(this, it) })
         bindSwitch(R.id.swPatternB, { Prefs.patternB(this) }, { Prefs.setPatternB(this, it) })
         bindSwitch(R.id.swStore, { Prefs.storeRecovery(this) }, { Prefs.setStoreRecovery(this, it) })
+        bindSwitch(R.id.swFarm, { Prefs.farm(this) }, { Prefs.setFarm(this, it) })
 
         val seek = findViewById<SeekBar>(R.id.seekGuard)
         seek.progress = Prefs.guardSeconds(this) - 10

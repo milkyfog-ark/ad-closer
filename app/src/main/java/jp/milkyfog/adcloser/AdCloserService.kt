@@ -3,8 +3,10 @@ package jp.milkyfog.adcloser
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -241,6 +243,7 @@ class AdCloserService : AccessibilityService() {
                     LogStore.add(this, "ゲームに戻りました。×の出現を待ちます")
                 }
                 handleGame(snap)
+                maybeFarmTick()
             }
             pkg == STORE_PKG -> {
                 if (sessionActive && Prefs.storeRecovery(this)) handleStore(snap)
@@ -419,6 +422,249 @@ class AdCloserService : AccessibilityService() {
      * step fires at most once; if the game window appears, evaluate()
      * clears [returningFromStore] and the normal ad flow resumes.
      */
+    // ---------------- farming mode (v0.8) ----------------
+    // Colour-based screen handling for low-level stage farming, designed
+    // with the user on 2026-11-12 from their screenshots. The game is
+    // Unity-based and exposes almost no accessibility text, so these
+    // screens are recognised by sampling screenshot colours instead:
+    //  - ステータス強化 (3 cards + 無料リフレッシュ button): tap the
+    //    strongest card by colour rank 赤>黄>紫>青>緑; ties prefer the
+    //    middle card, then left, then right (the user's chosen rule).
+    //  - ステータス強化 result (2 cards, no refresh button, shown right
+    //    after the roulette): tap 「空白をタップして続ける」 at (50%, 68%).
+    //  - ルーレット: tap the lime-green 「確認」 at (72%, 62%); never the
+    //    orange AD リフレッシュ button next to it.
+    //  - 勝利: tap the lime-green 「確認」 at (25%, 70%); never the blue
+    //    AD 「2倍受け取る」 button.
+    // Battle and stage-select screens are only watched, never tapped
+    // (the user starts each run manually; stamina is limited). If the
+    // same screen still needs action after 3 tries within a minute, the
+    // mode switches itself off and says so in the log.
+    private var farmBusy = false
+    private var farmLastShotAt = 0L
+    private var farmCooldownUntil = 0L
+    private var farmSig = ""
+    private var farmSigCount = 0
+    private var farmSigWindowStart = 0L
+    private var farmShotFailures = 0
+
+    private fun maybeFarmTick() {
+        if (!Prefs.farm(this) || sessionActive || farmBusy) return
+        if (Build.VERSION.SDK_INT < 31) return // wrapHardwareBuffer needs API 31
+        val t = now()
+        if (t < farmCooldownUntil) return
+        if (t - farmLastShotAt < 1100) return
+        farmLastShotAt = t
+        farmBusy = true
+        val executor = java.util.concurrent.Executor { r -> handler.post(r) }
+        try {
+            takeScreenshot(
+                android.view.Display.DEFAULT_DISPLAY,
+                executor,
+                object : TakeScreenshotCallback {
+                    override fun onSuccess(result: ScreenshotResult) {
+                        try {
+                            val bmp = screenshotToBitmap(result)
+                            if (bmp != null) {
+                                farmShotFailures = 0
+                                handleFarmBitmap(bmp)
+                                bmp.recycle()
+                            }
+                        } catch (e: Exception) {
+                            // One bad frame must not kill the watcher.
+                        }
+                        farmBusy = false
+                    }
+
+                    override fun onFailure(errorCode: Int) {
+                        farmBusy = false
+                        farmShotFailures++
+                        if (farmShotFailures == 5) {
+                            LogStore.add(
+                                this@AdCloserService,
+                                "周回モード：画面の色を取得できませんでした（この画面では判定できない可能性があります）"
+                            )
+                        }
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            farmBusy = false
+        }
+    }
+
+    private fun screenshotToBitmap(result: ScreenshotResult): Bitmap? {
+        val buffer = result.hardwareBuffer ?: return null
+        try {
+            val wrapped = Bitmap.wrapHardwareBuffer(buffer, result.colorSpace) ?: return null
+            val copy = wrapped.copy(Bitmap.Config.ARGB_8888, false)
+            wrapped.recycle()
+            return copy
+        } finally {
+            buffer.close()
+        }
+    }
+
+    private fun hsvOf(bmp: Bitmap, fx: Double, fy: Double): FloatArray {
+        val x = (bmp.width * fx).toInt().coerceIn(0, bmp.width - 1)
+        val y = (bmp.height * fy).toInt().coerceIn(0, bmp.height - 1)
+        val c = bmp.getPixel(x, y)
+        val hsv = FloatArray(3)
+        android.graphics.Color.RGBToHSV(
+            android.graphics.Color.red(c),
+            android.graphics.Color.green(c),
+            android.graphics.Color.blue(c),
+            hsv
+        )
+        return hsv
+    }
+
+    /** Share of sampled pixels in a fractional rect matching [pred]. */
+    private fun fractionWhere(
+        bmp: Bitmap,
+        x0: Double, x1: Double, y0: Double, y1: Double,
+        pred: (FloatArray) -> Boolean
+    ): Double {
+        var hit = 0
+        var total = 0
+        var fx = x0
+        while (fx <= x1) {
+            var fy = y0
+            while (fy <= y1) {
+                total++
+                if (pred(hsvOf(bmp, fx, fy))) hit++
+                fy += 0.012
+            }
+            fx += 0.012
+        }
+        return if (total == 0) 0.0 else hit.toDouble() / total
+    }
+
+    /** Colour rank of a pixel: 5=赤 (strongest) .. 1=緑, 0 = not a rank colour. */
+    private fun rankOfHsv(h: FloatArray): Int {
+        if (h[1] < 0.42f || h[2] < 0.32f) return 0
+        val hue = h[0]
+        return when {
+            hue < 14f || hue > 336f -> 5
+            hue in 22f..58f -> 4
+            hue in 250f..314f -> 3
+            hue in 176f..224f -> 2
+            hue in 100f..168f -> 1
+            else -> 0
+        }
+    }
+
+    /** Majority colour rank of one card body around centre [cx]; 0 if unclear. */
+    private fun cardRank(bmp: Bitmap, cx: Double): Int {
+        val counts = IntArray(6)
+        var fx = cx - 0.145
+        while (fx <= cx + 0.145) {
+            var fy = 0.335
+            while (fy <= 0.615) {
+                val r = rankOfHsv(hsvOf(bmp, fx, fy))
+                if (r > 0) counts[r]++
+                fy += 0.014
+            }
+            fx += 0.014
+        }
+        var best = 0
+        var bestCount = 0
+        var total = 0
+        for (r in 1..5) {
+            total += counts[r]
+            if (counts[r] > bestCount) {
+                bestCount = counts[r]
+                best = r
+            }
+        }
+        if (total < 12) return 0
+        return if (bestCount * 2 >= total) best else 0
+    }
+
+    private fun farmAct(sig: String, action: () -> Unit) {
+        val t = now()
+        if (sig == farmSig && t - farmSigWindowStart < 60_000) {
+            farmSigCount++
+        } else {
+            farmSig = sig
+            farmSigCount = 1
+            farmSigWindowStart = t
+        }
+        if (farmSigCount > 3) {
+            Prefs.setFarm(this, false)
+            LogStore.add(this, "周回モード：同じ画面（$sig）が続くため自動停止しました")
+            farmSig = ""
+            farmSigCount = 0
+            return
+        }
+        action()
+        farmCooldownUntil = t + 3000
+    }
+
+    private fun handleFarmBitmap(bmp: Bitmap) {
+        // ステータス強化 screens share the lime banner at the top.
+        val banner = fractionWhere(bmp, 0.25, 0.75, 0.172, 0.202) { h ->
+            h[0] in 60f..106f && h[1] > 0.45f && h[2] > 0.55f
+        }
+        if (banner > 0.5) {
+            // The 3-card selection has a blue 無料リフレッシュ button;
+            // the 2-card result screen after the roulette does not.
+            val refresh = fractionWhere(bmp, 0.345, 0.655, 0.702, 0.760) { h ->
+                h[0] in 183f..212f && h[1] > 0.45f && h[2] > 0.55f
+            }
+            if (refresh > 0.45) {
+                val centers = doubleArrayOf(0.172, 0.495, 0.825)
+                val ranks = IntArray(3) { cardRank(bmp, centers[it]) }
+                if (ranks.all { it > 0 }) {
+                    val best = maxOf(ranks[0], ranks[1], ranks[2])
+                    val order = intArrayOf(1, 0, 2) // tie: middle, left, right
+                    val pick = order.first { ranks[it] == best }
+                    val names = arrayOf("", "緑", "青", "紫", "黄", "赤")
+                    farmAct("ステータス強化") {
+                        LogStore.add(this, "周回：ステータス強化で「${names[best]}」を選択")
+                        tap(centers[pick], 0.45, "周回：カード選択")
+                    }
+                }
+            } else {
+                val r1 = cardRank(bmp, 0.335)
+                val r2 = cardRank(bmp, 0.665)
+                if (r1 > 0 && r2 > 0) {
+                    farmAct("リザルト") {
+                        tap(0.50, 0.68, "周回：空白をタップして続ける")
+                    }
+                }
+            }
+            return
+        }
+
+        // 勝利 screen: red banner + green/blue button pair at y ~ 70%.
+        val victoryBanner = fractionWhere(bmp, 0.28, 0.72, 0.272, 0.312) { h ->
+            (h[0] < 12f || h[0] > 344f) && h[1] > 0.40f && h[2] > 0.38f
+        }
+        val vConfirm = fractionWhere(bmp, 0.095, 0.415, 0.677, 0.732) { h ->
+            h[0] in 60f..106f && h[1] > 0.45f && h[2] > 0.55f
+        }
+        val vDouble = fractionWhere(bmp, 0.55, 0.91, 0.677, 0.732) { h ->
+            h[0] in 183f..212f && h[1] > 0.40f && h[2] > 0.55f
+        }
+        if (victoryBanner > 0.35 && vConfirm > 0.5 && vDouble > 0.35) {
+            farmAct("勝利") { tap(0.255, 0.705, "周回：勝利の確認") }
+            return
+        }
+
+        // ルーレット: green 確認 + orange AD リフレッシュ pair at y ~ 62%.
+        val rConfirm = fractionWhere(bmp, 0.545, 0.89, 0.595, 0.652) { h ->
+            h[0] in 60f..106f && h[1] > 0.45f && h[2] > 0.55f
+        }
+        val rRefresh = fractionWhere(bmp, 0.11, 0.46, 0.595, 0.652) { h ->
+            h[0] in 15f..47f && h[1] > 0.5f && h[2] > 0.5f
+        }
+        if (rConfirm > 0.5 && rRefresh > 0.4) {
+            farmAct("ルーレット") { tap(0.717, 0.623, "周回：ルーレットの確認") }
+            return
+        }
+    }
+
     private fun driveReturn(inRecents: Boolean) {
         val waited = now() - returnStepAt
         when (returnStep) {

@@ -28,6 +28,10 @@ object Prefs {
     fun setStoreRecovery(ctx: Context, v: Boolean) =
         sp(ctx).edit().putBoolean("store_recovery", v).apply()
 
+    /** Farming (auto-clicker) mode for stage grinding, added in v0.8. */
+    fun farm(ctx: Context): Boolean = sp(ctx).getBoolean("farm_mode", false)
+    fun setFarm(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("farm_mode", v).apply()
+
     /** Seconds to wait before the timing-based patterns (B/C) may tap. */
     fun guardSeconds(ctx: Context): Int = sp(ctx).getInt("guard_seconds", 30)
     fun setGuardSeconds(ctx: Context, v: Int) =

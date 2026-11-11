@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v0.7）"
+            android:text="広告クローザー（試作 v0.8）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -73,6 +73,12 @@
             android:layout_height="wrap_content"
             android:text="ストアからの復帰処理" />
 
+        <Switch
+            android:id="@+id/swFarm"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="周回モード（武器選択・確認を自動で押す）" />
+
         <TextView
             android:id="@+id/guardLabel"
             android:layout_width="match_parent"
@@ -90,7 +96,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="使い方：①と②を設定したら、セルサバイバーで広告を見るだけです。常駐待機が広告を検知して、終わったら×を押します。検知できないときは、フローティングボタンの「広告開始」を広告を始めるタイミングで押してください。\n\n安全のため、押す場所は画面の隅（右上・左上・ストアの×）だけに限定しています。中央のボタンは絶対に押しません。"
+            android:text="使い方：①と②を設定したら、セルサバイバーで広告を見るだけです。常駐待機が広告を検知して、終わったら×を押します。検知できないときは、フローティングボタンの「広告開始」を広告を始めるタイミングで押してください。\n\n安全のため、広告処理で押す場所は画面の隅（右上・左上・ストアの×）だけに限定しています。\n\n周回モード（v0.8〜）：オンの間だけ、セルサバイバーの周回中に止まる画面を色で判別して自動で押します。対象は「ステータス強化（いちばん強い色のカード。同色は真ん中優先）」「ルーレットの確認→空白をタップ」「勝利の確認」だけです。ステージ選択では何も押さず、バトル開始は手動のままです。フローティングボタンの「周回開始／周回停止」からも切り替えできます。"
             android:textSize="14sp" />
 
         <TextView
