@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="広告クローザー（試作 v0.1）"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/btnAccessibility"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="① ユーザー補助の設定を開く" />
+
+        <Button
+            android:id="@+id/btnOverlayPerm"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="② ほかのアプリの上に表示する許可" />
+
+        <Button
+            android:id="@+id/btnOverlayToggle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="フローティングボタンの表示／非表示" />
+
+        <Switch
+            android:id="@+id/swMaster"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="全体オン" />
+
+        <Switch
+            android:id="@+id/swResident"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="常駐待機（広告を自動で検知する）" />
+
+        <Switch
+            android:id="@+id/swPatternA"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="パターンA（右上・「報酬を獲得しました」）" />
+
+        <Switch
+            android:id="@+id/swPatternB"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="パターンB/C（左上・時間で判定）" />
+
+        <Switch
+            android:id="@+id/swStore"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ストアからの復帰処理" />
+
+        <TextView
+            android:id="@+id/guardLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:textSize="15sp" />
+
+        <SeekBar
+            android:id="@+id/seekGuard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="50" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="使い方：①と②を設定したら、セルサバイバーで広告を見るだけです。常駐待機が広告を検知して、終わったら×を押します。検知できないときは、フローティングボタンの「広告開始」を広告を始めるタイミングで押してください。\n\n安全のため、押す場所は画面の隅（右上・左上・ストアの×）だけに限定しています。中央のボタンは絶対に押しません。"
+            android:textSize="14sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="動作ログ"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnRefreshLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ログを更新" />
+
+        <Button
+            android:id="@+id/btnClearLog"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="ログを消す" />
+
+        <TextView
+            android:id="@+id/logText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:fontFamily="monospace"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+</ScrollView>

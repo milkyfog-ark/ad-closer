@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">広告クローザー</string>
+    <string name="service_description">セルサバイバーの報酬広告が終わったら、×ボタンを自動で押して閉じる自分専用の補助アプリです。対象はこのゲームとGoogle Playストア画面だけです。</string>
+</resources>
