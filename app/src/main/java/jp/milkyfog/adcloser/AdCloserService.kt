@@ -743,7 +743,25 @@ class AdCloserService : AccessibilityService() {
             h[0] in 15f..47f && h[1] > 0.5f && h[2] > 0.5f
         }
         if (rConfirm > 0.5 && rRefresh > 0.4) {
-            farmAct("ルーレット", "rou") { tap(0.717, 0.623, "周回：ルーレットの確認") }
+            // v1.3: the スキップ checkbox above 確認 (box at ~(0.64, 0.56))
+            // matters. With skip OFF the ejection animation keeps the
+            // screen from advancing even when 確認 is tapped — the user
+            // watched it stall on 2026-11-12 and pointed at the skip.
+            // A checked box carries a bright check mark; an unchecked one
+            // is uniformly dark (calibrated on the user's two roulette
+            // screenshots: bright share 0.11 checked vs 0.00 unchecked).
+            // Tap the box only when it is confidently dark, then let a
+            // later frame tap 確認.
+            val skipBright = fractionWhere(bmp, 0.618, 0.658, 0.544, 0.572) { h ->
+                h[2] > 0.65f
+            }
+            if (skipBright < 0.02) {
+                farmAct("ルーレット", "rou-skip") {
+                    tap(0.637, 0.558, "周回：ルーレットのスキップをオン")
+                }
+            } else {
+                farmAct("ルーレット", "rou") { tap(0.717, 0.623, "周回：ルーレットの確認") }
+            }
             return
         }
 
