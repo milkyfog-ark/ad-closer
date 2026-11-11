@@ -1,3 +1,5 @@
+import java.util.Base64
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -15,7 +17,7 @@ val fixedKeystore: File = rootProject.file("build/fixed-debug.keystore").apply {
     if (!exists()) {
         parentFile.mkdirs()
         val b64 = rootProject.file("debug-keystore.b64").readText()
-        writeBytes(java.util.Base64.getMimeDecoder().decode(b64))
+        writeBytes(Base64.getMimeDecoder().decode(b64))
     }
 }
 
