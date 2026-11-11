@@ -586,7 +586,17 @@ class AdCloserService : AccessibilityService() {
     }
 
     /** Majority colour rank of one card body around centre [cx]; 0 if unclear. */
-    private fun cardRank(bmp: Bitmap, cx: Double): Int {
+    private fun cardRank(bmp: Bitmap, cx: Double): Int = cardRankShare(bmp, cx).first
+
+    /**
+     * Like [cardRank] but also returns the winning colour's share of all
+     * rank-coloured samples (0.0 when unclear). v1.1 uses the share to tell
+     * the 3-card selection layout from the 2-card result layout: sampled
+     * at the true layout's centres the cards are solid (high share);
+     * sampled at the wrong layout's centres each strip mixes two cards or
+     * card + background (low share).
+     */
+    private fun cardRankShare(bmp: Bitmap, cx: Double): Pair<Int, Double> {
         val counts = IntArray(6)
         var fx = cx - 0.145
         while (fx <= cx + 0.145) {
@@ -608,8 +618,9 @@ class AdCloserService : AccessibilityService() {
                 best = r
             }
         }
-        if (total < 12) return 0
-        return if (bestCount * 2 >= total) best else 0
+        if (total < 12) return Pair(0, 0.0)
+        val share = bestCount.toDouble() / total
+        return if (bestCount * 2 >= total) Pair(best, share) else Pair(0, share)
     }
 
     private fun farmAct(sig: String, action: () -> Unit) {
@@ -661,43 +672,37 @@ class AdCloserService : AccessibilityService() {
                 this,
                 "周回診断：banner=${"%.2f".format(banner)} ref=${"%.2f".format(ref)} ranks=[$rk]"
             )
+            // (v1.1 decides between the 3-card and 2-card layouts by
+            // colour share; see the banner branch below.)
         }
         if (banner > 0.35) {
-            // The 3-card selection has a blue 無料リフレッシュ button;
-            // the 2-card result screen after the roulette does not.
-            val refresh = fractionWhere(bmp, 0.345, 0.655, 0.702, 0.760) { h ->
-                h[0] in 183f..212f && h[1] > 0.45f && h[2] > 0.55f
-            }
-            if (refresh > 0.35) {
-                val centers = doubleArrayOf(0.172, 0.495, 0.825)
-                val ranks = IntArray(3) { cardRank(bmp, centers[it]) }
-                if (ranks.all { it > 0 }) {
-                    val best = maxOf(ranks[0], ranks[1], ranks[2])
-                    val order = intArrayOf(1, 0, 2) // tie: middle, left, right
-                    val pick = order.first { ranks[it] == best }
-                    val names = arrayOf("", "緑", "青", "紫", "黄", "赤")
-                    farmAct("ステータス強化") {
-                        LogStore.add(this, "周回：ステータス強化で「${names[best]}」を選択")
-                        tap(centers[pick], 0.45, "周回：カード選択")
-                    }
+            // v1.1: telling the 3-card selection from the 2-card result
+            // screen by the 無料リフレッシュ button proved fragile
+            // on-device (0.47 in one test, 0.14 in the next — the
+            // floating panel can cover the button in screenshots).
+            // Instead compare layouts by colour share: sampled at the
+            // true layout's centres the strips are solid card colour
+            // (high share); at the wrong layout's centres they mix two
+            // cards or card + background (low share).
+            val centers3 = doubleArrayOf(0.172, 0.495, 0.825)
+            val centers2 = doubleArrayOf(0.335, 0.665)
+            val info3 = Array(3) { cardRankShare(bmp, centers3[it]) }
+            val info2 = Array(2) { cardRankShare(bmp, centers2[it]) }
+            val ranks3 = IntArray(3) { info3[it].first }
+            val share3 = if (ranks3.all { it > 0 }) info3.minOf { it.second } else 0.0
+            val share2 = if (info2.all { it.first > 0 }) info2.minOf { it.second } else 0.0
+            if (share3 > 0.0 && share3 >= share2) {
+                val best = maxOf(ranks3[0], ranks3[1], ranks3[2])
+                val order = intArrayOf(1, 0, 2) // tie: middle, left, right
+                val pick = order.first { ranks3[it] == best }
+                val names = arrayOf("", "緑", "青", "紫", "黄", "赤")
+                farmAct("ステータス強化") {
+                    LogStore.add(this, "周回：ステータス強化で「${names[best]}」を選択")
+                    tap(centers3[pick], 0.45, "周回：カード選択")
                 }
-            } else {
-                // Guard: on a 3-card screen caught mid-animation the
-                // refresh button may not be sampled yet, but the centre
-                // column is card-coloured; on the true 2-card result
-                // screen that column is the dark gap between the cards.
-                // If the centre is card-coloured, wait for a cleaner frame
-                // instead of treating this as the result screen.
-                val centreColoured = fractionWhere(bmp, 0.478, 0.522, 0.40, 0.58) { h ->
-                    rankOfHsv(h) > 0
-                }
-                if (centreColoured > 0.5) return
-                val r1 = cardRank(bmp, 0.335)
-                val r2 = cardRank(bmp, 0.665)
-                if (r1 > 0 && r2 > 0) {
-                    farmAct("リザルト") {
-                        tap(0.50, 0.68, "周回：空白をタップして続ける")
-                    }
+            } else if (share2 > 0.0) {
+                farmAct("リザルト") {
+                    tap(0.50, 0.68, "周回：空白をタップして続ける")
                 }
             }
             return
