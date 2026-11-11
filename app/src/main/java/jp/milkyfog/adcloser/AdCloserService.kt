@@ -623,12 +623,23 @@ class AdCloserService : AccessibilityService() {
         return if (bestCount * 2 >= total) Pair(best, share) else Pair(0, share)
     }
 
-    private fun farmAct(sig: String, action: () -> Unit) {
+    // v1.2: the guard counts actions per screen FINGERPRINT (for the
+    // selection, the actual card ranks), and the fingerprint is cleared
+    // whenever a frame matches no known screen. v1.0/v1.1 counted per
+    // screen type within a minute, which stopped the mode after three
+    // legitimate ステータス強化 picks in one run (the user's first
+    // successful test, 2026-11-12): picks are separated by battle frames
+    // and each new draw has different cards, so only a truly stuck
+    // screen — same cards, no gap — can now reach the cap.
+    private var farmFingerprint = ""
+
+    private fun farmAct(sig: String, fingerprint: String, action: () -> Unit) {
         val t = now()
-        if (sig == farmSig && t - farmSigWindowStart < 60_000) {
+        if (fingerprint == farmFingerprint && t - farmSigWindowStart < 60_000) {
             farmSigCount++
         } else {
             farmSig = sig
+            farmFingerprint = fingerprint
             farmSigCount = 1
             farmSigWindowStart = t
         }
@@ -636,6 +647,7 @@ class AdCloserService : AccessibilityService() {
             Prefs.setFarm(this, false)
             LogStore.add(this, "周回モード：同じ画面（$sig）が続くため自動停止しました")
             farmSig = ""
+            farmFingerprint = ""
             farmSigCount = 0
             return
         }
@@ -696,12 +708,12 @@ class AdCloserService : AccessibilityService() {
                 val order = intArrayOf(1, 0, 2) // tie: middle, left, right
                 val pick = order.first { ranks3[it] == best }
                 val names = arrayOf("", "緑", "青", "紫", "黄", "赤")
-                farmAct("ステータス強化") {
+                farmAct("ステータス強化", "sel:" + ranks3.joinToString(",")) {
                     LogStore.add(this, "周回：ステータス強化で「${names[best]}」を選択")
                     tap(centers3[pick], 0.45, "周回：カード選択")
                 }
             } else if (share2 > 0.0) {
-                farmAct("リザルト") {
+                farmAct("リザルト", "res:${info2[0].first},${info2[1].first}") {
                     tap(0.50, 0.68, "周回：空白をタップして続ける")
                 }
             }
@@ -719,7 +731,7 @@ class AdCloserService : AccessibilityService() {
             h[0] in 183f..212f && h[1] > 0.40f && h[2] > 0.55f
         }
         if (victoryBanner > 0.35 && vConfirm > 0.5 && vDouble > 0.35) {
-            farmAct("勝利") { tap(0.255, 0.705, "周回：勝利の確認") }
+            farmAct("勝利", "vic") { tap(0.255, 0.705, "周回：勝利の確認") }
             return
         }
 
@@ -731,9 +743,14 @@ class AdCloserService : AccessibilityService() {
             h[0] in 15f..47f && h[1] > 0.5f && h[2] > 0.5f
         }
         if (rConfirm > 0.5 && rRefresh > 0.4) {
-            farmAct("ルーレット") { tap(0.717, 0.623, "周回：ルーレットの確認") }
+            farmAct("ルーレット", "rou") { tap(0.717, 0.623, "周回：ルーレットの確認") }
             return
         }
+
+        // No known screen in this frame: the previous screen is gone, so
+        // forget its fingerprint (v1.2 guard reset).
+        farmFingerprint = ""
+        farmSigCount = 0
     }
 
     private fun driveReturn(inRecents: Boolean) {
