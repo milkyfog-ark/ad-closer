@@ -178,6 +178,16 @@ class AdCloserService : AccessibilityService() {
     private fun screenW(): Int = resources.displayMetrics.widthPixels
     private fun screenH(): Int = resources.displayMetrics.heightPixels
 
+    /** Logs gesture cancellations (v1.6) so a failed tap can be told
+     *  apart: cancelled = our side lost the gesture; completed but the
+     *  game did not move = the game ignored the press. */
+    private fun gestureCallback(why: String) =
+        object : GestureResultCallback() {
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                LogStore.add(this@AdCloserService, "タップがキャンセルされました：$why")
+            }
+        }
+
     private fun tap(xFraction: Double, yFraction: Double, why: String) {
         val x = (screenW() * xFraction).toFloat()
         val y = (screenH() * yFraction).toFloat()
@@ -185,7 +195,28 @@ class AdCloserService : AccessibilityService() {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 70))
             .build()
-        dispatchGesture(gesture, null, null)
+        dispatchGesture(gesture, gestureCallback(why), null)
+        LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
+    }
+
+    /**
+     * Double tap for game buttons (v1.6). Single synthetic presses —
+     * plain (v1.2) and firmer (v1.4) alike — were logged repeatedly on
+     * the roulette / victory 確認 buttons while the game stayed on the
+     * same screen, so the press now comes twice, 400ms apart, delivered
+     * as one gesture. Card picks keep the proven single tap.
+     */
+    private fun tapButton(xFraction: Double, yFraction: Double, why: String) {
+        val x = (screenW() * xFraction).toFloat()
+        val y = (screenH() * yFraction).toFloat()
+        fun stroke(start: Long) = GestureDescription.StrokeDescription(
+            Path().apply { moveTo(x, y) }, start, 80
+        )
+        val gesture = GestureDescription.Builder()
+            .addStroke(stroke(0))
+            .addStroke(stroke(400))
+            .build()
+        dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
     }
 
@@ -194,7 +225,7 @@ class AdCloserService : AccessibilityService() {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 70))
             .build()
-        dispatchGesture(gesture, null, null)
+        dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why をタップ")
     }
 
@@ -756,27 +787,7 @@ class AdCloserService : AccessibilityService() {
             return
         }
         action()
-        farmCooldownUntil = t + 3000
-    }
-
-    /**
-     * Firmer tap for game buttons (v1.4). The plain 70ms point tap worked
-     * on the selection cards but the victory 確認 taps were logged three
-     * times without the game advancing (2026-11-12). A slightly longer
-     * press with a minimal drag registers on stricter UI layers.
-     */
-    private fun tapFirm(xFraction: Double, yFraction: Double, why: String) {
-        val x = (screenW() * xFraction).toFloat()
-        val y = (screenH() * yFraction).toFloat()
-        val path = Path().apply {
-            moveTo(x, y)
-            lineTo(x + 3f, y + 3f)
-        }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 130))
-            .build()
-        dispatchGesture(gesture, null, null)
-        LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
+        farmCooldownUntil = t + 4500
     }
 
     private fun handleFarmBitmap(bmp: Bitmap) {
@@ -838,7 +849,7 @@ class AdCloserService : AccessibilityService() {
                 }
             } else if (share2 > 0.0) {
                 farmAct("リザルト", "res:${info2[0].first},${info2[1].first}") {
-                    tapFirm(0.50, 0.68, "周回：空白をタップして続ける")
+                    tapButton(0.50, 0.68, "周回：空白をタップして続ける")
                 }
             }
             return
@@ -865,7 +876,7 @@ class AdCloserService : AccessibilityService() {
             )
             val idx = if (farmFingerprint == "vic") minOf(farmSigCount, 2) else 0
             val p = pts[idx]
-            farmAct("勝利", "vic") { tapFirm(p[0], p[1], "周回：勝利の確認") }
+            farmAct("勝利", "vic") { tapButton(p[0], p[1], "周回：勝利の確認") }
             return
         }
 
@@ -894,7 +905,7 @@ class AdCloserService : AccessibilityService() {
                     tap(0.637, 0.558, "周回：ルーレットのスキップをオン")
                 }
             } else {
-                farmAct("ルーレット", "rou") { tapFirm(0.717, 0.623, "周回：ルーレットの確認") }
+                farmAct("ルーレット", "rou") { tapButton(0.717, 0.623, "周回：ルーレットの確認") }
             }
             return
         }
