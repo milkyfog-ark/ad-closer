@@ -634,7 +634,15 @@ class AdCloserService : AccessibilityService() {
 
     private fun handleFarmBitmap(bmp: Bitmap) {
         // ステータス強化 screens share the lime banner at the top.
-        val banner = fractionWhere(bmp, 0.25, 0.75, 0.172, 0.202) { h ->
+        // v1.0 calibration from the user's on-device diagnostics
+        // (2026-11-12): the banner read 0.48 against a 0.50 threshold and
+        // the refresh button 0.47 against 0.45, while card ranks were
+        // already correct ([4,4,5] for 黄/黄/赤). The banner strip is now
+        // the banner's central band (the white title text and the ribbon
+        // edges dilute a full-height strip), and both thresholds sit at
+        // 0.35 — still far above the ~0.10 seen on battle screens and
+        // the ~0.00 the result screen gives for the refresh button.
+        val banner = fractionWhere(bmp, 0.25, 0.75, 0.174, 0.194) { h ->
             h[0] in 60f..106f && h[1] > 0.45f && h[2] > 0.55f
         }
         // v0.9 diagnostics: report sampled values every ~5s so a silent
@@ -654,13 +662,13 @@ class AdCloserService : AccessibilityService() {
                 "周回診断：banner=${"%.2f".format(banner)} ref=${"%.2f".format(ref)} ranks=[$rk]"
             )
         }
-        if (banner > 0.5) {
+        if (banner > 0.35) {
             // The 3-card selection has a blue 無料リフレッシュ button;
             // the 2-card result screen after the roulette does not.
             val refresh = fractionWhere(bmp, 0.345, 0.655, 0.702, 0.760) { h ->
                 h[0] in 183f..212f && h[1] > 0.45f && h[2] > 0.55f
             }
-            if (refresh > 0.45) {
+            if (refresh > 0.35) {
                 val centers = doubleArrayOf(0.172, 0.495, 0.825)
                 val ranks = IntArray(3) { cardRank(bmp, centers[it]) }
                 if (ranks.all { it > 0 }) {
@@ -674,6 +682,16 @@ class AdCloserService : AccessibilityService() {
                     }
                 }
             } else {
+                // Guard: on a 3-card screen caught mid-animation the
+                // refresh button may not be sampled yet, but the centre
+                // column is card-coloured; on the true 2-card result
+                // screen that column is the dark gap between the cards.
+                // If the centre is card-coloured, wait for a cleaner frame
+                // instead of treating this as the result screen.
+                val centreColoured = fractionWhere(bmp, 0.478, 0.522, 0.40, 0.58) { h ->
+                    rankOfHsv(h) > 0
+                }
+                if (centreColoured > 0.5) return
                 val r1 = cardRank(bmp, 0.335)
                 val r2 = cardRank(bmp, 0.665)
                 if (r1 > 0 && r2 > 0) {
