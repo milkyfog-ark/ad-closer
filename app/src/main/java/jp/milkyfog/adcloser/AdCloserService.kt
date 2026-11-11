@@ -2,6 +2,7 @@ package jp.milkyfog.adcloser
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.content.Intent
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Handler
@@ -69,10 +70,16 @@ class AdCloserService : AccessibilityService() {
     private var storeExcursions = 0
     private var noAdSignalSince = 0L
     private var lastStoreActionAt = 0L
-    private var recentsInProgress = false
-    private var recentsStage = 0
-    private var recentsStageAt = 0L
-    private var recentsAttempts = 0
+    // Return-from-full-screen-store state (v0.2). The v0.1 approach tapped
+    // the game's name label inside Recents on every 700ms tick; on the
+    // user's Galaxy S20 that tap does nothing, so it fired ~40 times in
+    // 18 seconds and stranded the user on the Recents screen. v0.2 brings
+    // the game forward with its launch intent first and uses Recents only
+    // as a single, throttled fallback.
+    private var returningFromStore = false
+    private var returnStep = 0
+    private var returnStepAt = 0L
+    private var returnBlocked = false
     private var lastEventClass = ""
 
     override fun onServiceConnected() {
@@ -183,15 +190,16 @@ class AdCloserService : AccessibilityService() {
         storeCloseCount = 0
         storeExcursions = 0
         noAdSignalSince = 0L
-        recentsInProgress = false
-        recentsAttempts = 0
+        returningFromStore = false
+        returnStep = 0
+        returnBlocked = false
         LogStore.add(this, "$why：広告の監視を開始")
     }
 
     private fun endSession(note: String) {
         if (sessionActive) LogStore.add(this, note)
         sessionActive = false
-        recentsInProgress = false
+        returningFromStore = false
         noAdSignalSince = 0L
     }
 
@@ -218,9 +226,9 @@ class AdCloserService : AccessibilityService() {
 
         when {
             pkg == GAME_PKG -> {
-                if (recentsInProgress) {
+                if (returningFromStore) {
                     // We made it back to the game from the store.
-                    recentsInProgress = false
+                    returningFromStore = false
                     storeExcursions++
                     topLeftStage = 0
                     noAdSignalSince = 0L
@@ -232,7 +240,7 @@ class AdCloserService : AccessibilityService() {
                 if (sessionActive && Prefs.storeRecovery(this)) handleStore(snap)
             }
             pkg in RECENTS_PKGS -> {
-                if (recentsInProgress) handleRecents(snap)
+                if (returningFromStore) driveReturn(inRecents = true)
             }
         }
     }
@@ -308,11 +316,11 @@ class AdCloserService : AccessibilityService() {
     }
 
     private fun handleStore(snap: Snap) {
-        if (now() - lastStoreActionAt < 2500) return
         val playHeader = snap.boundsOf("Google Play")
         val isSheet = playHeader != null &&
             (playHeader.centerY().toDouble() / screenH()) in 0.15..0.32
         if (isSheet) {
+            if (now() - lastStoreActionAt < 2500) return
             if (storeCloseCount >= 3) {
                 endSession("ストアが何度も開くため停止しました（手動で閉じてください）")
                 return
@@ -321,45 +329,90 @@ class AdCloserService : AccessibilityService() {
             storeCloseCount++
             tap(0.932, 0.233, "ストアのシートの×")
         } else {
-            // Full-screen Play app (pattern C): go back via Recents.
-            if (recentsAttempts >= 2) {
-                endSession("タブ操作での復帰に失敗したため停止しました")
+            // Full-screen Play app (pattern C): bring the game back.
+            if (returnBlocked) return
+            if (returningFromStore) {
+                driveReturn(inRecents = false)
                 return
             }
-            recentsAttempts++
-            recentsInProgress = true
-            recentsStage = 0
-            recentsStageAt = now()
+            returningFromStore = true
+            returnStep = 0
+            returnStepAt = now()
             lastStoreActionAt = now()
-            performGlobalAction(GLOBAL_ACTION_RECENTS)
-            LogStore.add(this, "パターンC：履歴（タブ）を開いてゲームに戻ります")
+            LogStore.add(this, "パターンC：ストア（全画面）からゲームへの復帰を開始")
+            launchGameIntent()
         }
     }
 
-    private fun handleRecents(snap: Snap) {
-        // Preferred: tap the game's card, found by its label.
-        val gameLabel = snap.boundsByText.entries.firstOrNull {
-            it.key.contains("セルサバイバー") || it.key.contains("Cell Survivor")
+    /** Bring Cell Survivor to the front via its launch intent. */
+    private fun launchGameIntent(): Boolean {
+        return try {
+            val intent = packageManager.getLaunchIntentForPackage(GAME_PKG)
+            if (intent == null) {
+                LogStore.add(this, "ゲームの起動インテントが見つかりません")
+                false
+            } else {
+                intent.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                )
+                startActivity(intent)
+                LogStore.add(this, "ゲームを直接呼び戻しました（起動インテント）")
+                true
+            }
+        } catch (e: Exception) {
+            LogStore.add(this, "起動インテントに失敗しました：" + e.javaClass.simpleName)
+            false
         }
-        if (gameLabel != null) {
-            tapRect(gameLabel.value, "履歴の中のセルサバイバー")
-            recentsStageAt = now()
-            return
-        }
-        val waited = now() - recentsStageAt
-        if (recentsStage == 0 && waited > 1600) {
-            // One UI shows the previous app peeking from the side; tap it
-            // once to centre it.
-            recentsStage = 1
-            recentsStageAt = now()
-            tap(0.12, 0.45, "履歴の横のカード")
-        } else if (recentsStage == 1 && waited > 1300) {
-            recentsStage = 2
-            recentsStageAt = now()
-            tap(0.50, 0.45, "履歴の中央のカード")
-        } else if (recentsStage == 2 && waited > 3000) {
-            recentsInProgress = false
-            LogStore.add(this, "履歴からゲームのカードを見つけられませんでした")
+    }
+
+    /**
+     * Timed, single-shot return steps. Called on the 700ms tick while the
+     * foreground is the store or Recents and a return is in progress. Each
+     * step fires at most once; if the game window appears, evaluate()
+     * clears [returningFromStore] and the normal ad flow resumes.
+     */
+    private fun driveReturn(inRecents: Boolean) {
+        val waited = now() - returnStepAt
+        when (returnStep) {
+            0 -> if (waited > 1800) {
+                // Launch intent did not bring the game forward: open
+                // Recents once as a fallback.
+                returnStep = 1
+                returnStepAt = now()
+                performGlobalAction(GLOBAL_ACTION_RECENTS)
+                LogStore.add(this, "復帰の予備手段：履歴（タブ）を開きます")
+            }
+            1 -> if (waited > 1300) {
+                if (inRecents) {
+                    // One UI centres the most recent task, which is the
+                    // game (the store was opened from it). Tap the card
+                    // body once; v0.1 tapped the app-name label instead,
+                    // which One UI ignores. Never fire this tap while the
+                    // store is still in front.
+                    returnStep = 2
+                    returnStepAt = now()
+                    tap(0.50, 0.45, "履歴の中央のカード")
+                } else if (waited > 3500) {
+                    // Recents never came to the front; skip the card tap
+                    // and retry the launch intent instead.
+                    returnStep = 3
+                    returnStepAt = now()
+                    launchGameIntent()
+                }
+            }
+            2 -> if (waited > 2000) {
+                returnStep = 3
+                returnStepAt = now()
+                launchGameIntent()
+            }
+            3 -> if (waited > 2500) {
+                returningFromStore = false
+                returnBlocked = true
+                LogStore.add(
+                    this,
+                    "自動でゲームに戻れませんでした。履歴からセルサバイバーを選んでください（監視は続けます）"
+                )
+            }
         }
     }
 }
