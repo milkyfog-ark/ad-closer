@@ -86,6 +86,18 @@ class AdCloserService : AccessibilityService() {
     private var returnStepAt = 0L
     private var returnBlocked = false
     private var lastEventClass = ""
+    // Pattern E state (v1.5, from the user's TikTok-card screenshots on
+    // 2026-11-12): an end card whose only corner control is first a ">>"
+    // that opens the advertiser's own app full-screen; after switching
+    // back to the game the same corner (0.926, 0.072) has become an x.
+    // eStage: 0 = not started, 1 = ">>" tapped / excursion expected,
+    // 2 = back in the game, tapping the x.
+    private var eStage = 0
+    private var eTapCount = 0
+    private var lastETapAt = 0L
+    private var returningFromExcursion = false
+    private var excursionAt = 0L
+    private var excursionTries = 0
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -201,6 +213,10 @@ class AdCloserService : AccessibilityService() {
         returningFromStore = false
         returnStep = 0
         returnBlocked = false
+        eStage = 0
+        eTapCount = 0
+        lastETapAt = 0L
+        returningFromExcursion = false
         LogStore.add(this, "$why：広告の監視を開始")
     }
 
@@ -208,6 +224,7 @@ class AdCloserService : AccessibilityService() {
         if (sessionActive) LogStore.add(this, note)
         sessionActive = false
         returningFromStore = false
+        returningFromExcursion = false
         noAdSignalSince = 0L
     }
 
@@ -240,7 +257,18 @@ class AdCloserService : AccessibilityService() {
                     storeExcursions++
                     topLeftStage = 0
                     noAdSignalSince = 0L
+                    if (eStage == 1) eStage = 2
                     LogStore.add(this, "ゲームに戻りました。×の出現を待ちます")
+                }
+                if (returningFromExcursion) {
+                    // Back from the advertiser's app (pattern E).
+                    returningFromExcursion = false
+                    noAdSignalSince = 0L
+                    if (eStage == 1) {
+                        eStage = 2
+                        lastETapAt = 0L
+                    }
+                    LogStore.add(this, "パターンE：広告主アプリからゲームに戻りました")
                 }
                 handleGame(snap)
                 maybeFarmTick()
@@ -251,6 +279,36 @@ class AdCloserService : AccessibilityService() {
             pkg in RECENTS_PKGS -> {
                 if (returningFromStore) driveReturn(inRecents = true)
             }
+            else -> {
+                if (sessionActive) handleExcursion(pkg)
+            }
+        }
+    }
+
+    /**
+     * Pattern E excursion (v1.5): during a session the foreground became
+     * an app that is neither the game, the store, nor Recents — the
+     * advertiser's own app, opened by the end card's corner control.
+     * Bring the game forward with its launch intent, like pattern C.
+     * (Our own app's screens are ignored.)
+     */
+    private fun handleExcursion(pkg: String) {
+        if (pkg == packageName) return
+        if (!returningFromExcursion) {
+            returningFromExcursion = true
+            excursionAt = now()
+            excursionTries = 0
+            LogStore.add(this, "パターンE：別アプリ（$pkg）に移りました。ゲームに戻します")
+            return
+        }
+        val waited = now() - excursionAt
+        if (waited > 1800 && excursionTries < 3) {
+            excursionTries++
+            excursionAt = now()
+            launchGameIntent()
+        } else if (excursionTries >= 3 && waited > 3000) {
+            returningFromExcursion = false
+            LogStore.add(this, "パターンE：自動でゲームに戻れませんでした。手動でセルサバイバーに戻ってください")
         }
     }
 
@@ -292,6 +350,46 @@ class AdCloserService : AccessibilityService() {
                 tap(0.932, 0.233, "ストアのシートの×")
                 return
             }
+        }
+
+        // Pattern E (v1.5): the "Google Playに行く" end card (TikTok /
+        // Pangle family). Its big button text is the marker. This must
+        // run before the generic endCard branch, whose pattern-B taps
+        // aim at the top-left and would waste the session here.
+        if (snap.has("Google Playに行く") && Prefs.patternB(this)) {
+            noAdSignalSince = 0L
+            val elapsedSec = (now() - adStartAt) / 1000
+            when (eStage) {
+                0 -> {
+                    // The corner control is still ">>", not an x. The
+                    // guard period ensures a mid-video frame can never
+                    // trigger this tap.
+                    if (elapsedSec >= Prefs.guardSeconds(this) && now() - lastETapAt > 4000) {
+                        lastETapAt = now()
+                        eStage = 1
+                        tap(0.926, 0.072, "パターンE：右上の>>（広告主アプリが開きます）")
+                    }
+                }
+                1 -> {
+                    // No excursion happened (the tap may have swapped
+                    // the control in place): treat the corner as the x.
+                    if (now() - lastETapAt > 12000) {
+                        eStage = 2
+                        lastETapAt = 0L
+                        LogStore.add(this, "パターンE：別アプリは開かなかったため、そのまま右上×を試します")
+                    }
+                }
+                else -> {
+                    if (eTapCount < 3 && now() - lastETapAt > 3500) {
+                        lastETapAt = now()
+                        eTapCount++
+                        tap(0.926, 0.072, "パターンE：戻った後の右上×")
+                    } else if (eTapCount >= 3 && now() - lastETapAt > 8000) {
+                        endSession("パターンE：戻った後の×を押せませんでした（手動で閉じてください）")
+                    }
+                }
+            }
+            return
         }
 
         if (closeInCorner && Prefs.patternB(this)) {

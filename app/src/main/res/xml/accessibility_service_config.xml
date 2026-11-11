@@ -7,5 +7,4 @@
     android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true"
     android:description="@string/service_description"
-    android:notificationTimeout="100"
-    android:packageNames="defense.roguelike.cell.shoot.survivor,com.android.vending,com.android.systemui,com.sec.android.app.launcher,com.android.launcher3" />
+    android:notificationTimeout="100" />
