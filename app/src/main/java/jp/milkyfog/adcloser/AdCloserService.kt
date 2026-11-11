@@ -447,9 +447,26 @@ class AdCloserService : AccessibilityService() {
     private var farmSigCount = 0
     private var farmSigWindowStart = 0L
     private var farmShotFailures = 0
+    // Diagnostics (v0.9): the first on-device farm test (2026-11-12) did
+    // nothing at all and logged nothing, so v0.9 reports which stage of
+    // the pipeline is reached: gate heartbeat, screenshot success/failure
+    // with error codes, and the sampled colour fractions.
+    private var farmDiagGateAt = 0L
+    private var farmDiagAt = 0L
+    private var farmShotLogged = false
+    private var farmExCount = 0
 
     private fun maybeFarmTick() {
-        if (!Prefs.farm(this) || sessionActive || farmBusy) return
+        if (!Prefs.farm(this)) return
+        val tg = now()
+        if (tg - farmDiagGateAt > 10_000) {
+            farmDiagGateAt = tg
+            LogStore.add(
+                this,
+                "周回診断：gate session=$sessionActive busy=$farmBusy sdk=${Build.VERSION.SDK_INT}"
+            )
+        }
+        if (sessionActive || farmBusy) return
         if (Build.VERSION.SDK_INT < 31) return // wrapHardwareBuffer needs API 31
         val t = now()
         if (t < farmCooldownUntil) return
@@ -467,8 +484,18 @@ class AdCloserService : AccessibilityService() {
                             val bmp = screenshotToBitmap(result)
                             if (bmp != null) {
                                 farmShotFailures = 0
+                                if (!farmShotLogged) {
+                                    farmShotLogged = true
+                                    LogStore.add(
+                                        this@AdCloserService,
+                                        "周回診断：画面取得OK (${bmp.width}x${bmp.height})"
+                                    )
+                                }
                                 handleFarmBitmap(bmp)
                                 bmp.recycle()
+                            } else if (!farmShotLogged) {
+                                farmShotLogged = true
+                                LogStore.add(this@AdCloserService, "周回診断：画面の変換に失敗しました")
                             }
                         } catch (e: Exception) {
                             // One bad frame must not kill the watcher.
@@ -479,10 +506,10 @@ class AdCloserService : AccessibilityService() {
                     override fun onFailure(errorCode: Int) {
                         farmBusy = false
                         farmShotFailures++
-                        if (farmShotFailures == 5) {
+                        if (farmShotFailures <= 5) {
                             LogStore.add(
                                 this@AdCloserService,
-                                "周回モード：画面の色を取得できませんでした（この画面では判定できない可能性があります）"
+                                "周回診断：画面取得に失敗 (code=$errorCode)"
                             )
                         }
                     }
@@ -490,6 +517,10 @@ class AdCloserService : AccessibilityService() {
             )
         } catch (e: Exception) {
             farmBusy = false
+            farmExCount++
+            if (farmExCount <= 3) {
+                LogStore.add(this, "周回診断：画面取得で例外 ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
     }
 
@@ -605,6 +636,23 @@ class AdCloserService : AccessibilityService() {
         // ステータス強化 screens share the lime banner at the top.
         val banner = fractionWhere(bmp, 0.25, 0.75, 0.172, 0.202) { h ->
             h[0] in 60f..106f && h[1] > 0.45f && h[2] > 0.55f
+        }
+        // v0.9 diagnostics: report sampled values every ~5s so a silent
+        // no-match can be debugged from the user's log screenshot.
+        val td = now()
+        if (td - farmDiagAt > 5000) {
+            farmDiagAt = td
+            val ref = fractionWhere(bmp, 0.345, 0.655, 0.702, 0.760) { h ->
+                h[0] in 183f..212f && h[1] > 0.45f && h[2] > 0.55f
+            }
+            val rk = if (banner > 0.2) {
+                val cs = doubleArrayOf(0.172, 0.495, 0.825)
+                IntArray(3) { cardRank(bmp, cs[it]) }.joinToString(",")
+            } else "-"
+            LogStore.add(
+                this,
+                "周回診断：banner=${"%.2f".format(banner)} ref=${"%.2f".format(ref)} ranks=[$rk]"
+            )
         }
         if (banner > 0.5) {
             // The 3-card selection has a blue 無料リフレッシュ button;
