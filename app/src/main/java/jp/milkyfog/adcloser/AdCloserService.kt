@@ -631,9 +631,18 @@ class AdCloserService : AccessibilityService() {
     // successful test, 2026-11-12): picks are separated by battle frames
     // and each new draw has different cards, so only a truly stuck
     // screen — same cards, no gap — can now reach the cap.
+    //
+    // v1.4: reaching the cap no longer switches the whole mode off. On
+    // the victory screen (2026-11-12) the taps were logged but the game
+    // did not advance, and the mode-level stop then forced the user to
+    // re-enable farming by hand — twice. Now the cap only puts THAT
+    // screen instance to sleep until it goes away; farming continues
+    // for everything else, and 全停止 remains the real brake.
     private var farmFingerprint = ""
+    private var farmSuppressed = ""
 
     private fun farmAct(sig: String, fingerprint: String, action: () -> Unit) {
+        if (fingerprint == farmSuppressed) return
         val t = now()
         if (fingerprint == farmFingerprint && t - farmSigWindowStart < 60_000) {
             farmSigCount++
@@ -644,15 +653,32 @@ class AdCloserService : AccessibilityService() {
             farmSigWindowStart = t
         }
         if (farmSigCount > 3) {
-            Prefs.setFarm(this, false)
-            LogStore.add(this, "周回モード：同じ画面（$sig）が続くため自動停止しました")
-            farmSig = ""
-            farmFingerprint = ""
-            farmSigCount = 0
+            farmSuppressed = fingerprint
+            LogStore.add(this, "周回：この画面（$sig）は自動で進められなかったため、画面が変わるまでお休みします")
             return
         }
         action()
         farmCooldownUntil = t + 3000
+    }
+
+    /**
+     * Firmer tap for game buttons (v1.4). The plain 70ms point tap worked
+     * on the selection cards but the victory 確認 taps were logged three
+     * times without the game advancing (2026-11-12). A slightly longer
+     * press with a minimal drag registers on stricter UI layers.
+     */
+    private fun tapFirm(xFraction: Double, yFraction: Double, why: String) {
+        val x = (screenW() * xFraction).toFloat()
+        val y = (screenH() * yFraction).toFloat()
+        val path = Path().apply {
+            moveTo(x, y)
+            lineTo(x + 3f, y + 3f)
+        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 130))
+            .build()
+        dispatchGesture(gesture, null, null)
+        LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
     }
 
     private fun handleFarmBitmap(bmp: Bitmap) {
@@ -714,7 +740,7 @@ class AdCloserService : AccessibilityService() {
                 }
             } else if (share2 > 0.0) {
                 farmAct("リザルト", "res:${info2[0].first},${info2[1].first}") {
-                    tap(0.50, 0.68, "周回：空白をタップして続ける")
+                    tapFirm(0.50, 0.68, "周回：空白をタップして続ける")
                 }
             }
             return
@@ -731,7 +757,17 @@ class AdCloserService : AccessibilityService() {
             h[0] in 183f..212f && h[1] > 0.40f && h[2] > 0.55f
         }
         if (victoryBanner > 0.35 && vConfirm > 0.5 && vDouble > 0.35) {
-            farmAct("勝利", "vic") { tap(0.255, 0.705, "周回：勝利の確認") }
+            // Retry with slightly shifted points inside the button: in
+            // the v1.2 test the centre tap was logged three times while
+            // the game stayed on this screen.
+            val pts = arrayOf(
+                doubleArrayOf(0.255, 0.705),
+                doubleArrayOf(0.255, 0.688),
+                doubleArrayOf(0.300, 0.705)
+            )
+            val idx = if (farmFingerprint == "vic") minOf(farmSigCount, 2) else 0
+            val p = pts[idx]
+            farmAct("勝利", "vic") { tapFirm(p[0], p[1], "周回：勝利の確認") }
             return
         }
 
@@ -760,15 +796,16 @@ class AdCloserService : AccessibilityService() {
                     tap(0.637, 0.558, "周回：ルーレットのスキップをオン")
                 }
             } else {
-                farmAct("ルーレット", "rou") { tap(0.717, 0.623, "周回：ルーレットの確認") }
+                farmAct("ルーレット", "rou") { tapFirm(0.717, 0.623, "周回：ルーレットの確認") }
             }
             return
         }
 
         // No known screen in this frame: the previous screen is gone, so
-        // forget its fingerprint (v1.2 guard reset).
+        // forget its fingerprint (v1.2 guard reset) and any suppression.
         farmFingerprint = ""
         farmSigCount = 0
+        farmSuppressed = ""
     }
 
     private fun driveReturn(inRecents: Boolean) {
