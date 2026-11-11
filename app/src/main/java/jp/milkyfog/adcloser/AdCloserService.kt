@@ -64,6 +64,7 @@ class AdCloserService : AccessibilityService() {
     private var adStartAt = 0L
     private var consumedArmAt = 0L
     private var lastATapAt = 0L
+    private var aTapCount = 0
     private var lastTopLeftTapAt = 0L
     private var topLeftStage = 0 // 0 = none, 1 = tried y=6%, 2 = tried y=3%, 3 = retried y=6%
     private var storeCloseCount = 0
@@ -185,6 +186,7 @@ class AdCloserService : AccessibilityService() {
         sessionActive = true
         adStartAt = at
         lastATapAt = 0L
+        aTapCount = 0
         lastTopLeftTapAt = 0L
         topLeftStage = 0
         storeCloseCount = 0
@@ -246,8 +248,13 @@ class AdCloserService : AccessibilityService() {
     }
 
     private fun handleGame(snap: Snap) {
-        val rewardReady = snap.has("報酬を獲得しました")
-        val endCard = snap.has("インストール") || snap.has("Google Play")
+        // AdMob end cards come in Japanese and English variants; the
+        // English "Reward granted" card (× at about (94%, 5%)) reached the
+        // user on 2026-11-11 and v0.3 missed it because only the Japanese
+        // text was registered.
+        val rewardReady = snap.has("報酬を獲得しました") || snap.has("Reward granted")
+        val endCard = snap.has("インストール") || snap.has("Google Play") ||
+            snap.has("Install")
 
         if (!sessionActive) {
             if (Prefs.resident(this) && (rewardReady || endCard)) {
@@ -271,9 +278,18 @@ class AdCloserService : AccessibilityService() {
 
         if (rewardReady) {
             noAdSignalSince = 0L
-            if (Prefs.patternA(this) && now() - lastATapAt > 5000) {
+            if (Prefs.patternA(this) && now() - lastATapAt > 4000) {
+                if (aTapCount >= 6) {
+                    endSession("右上の×を押せませんでした（手動で閉じてください）")
+                    return
+                }
                 lastATapAt = now()
-                tap(0.942, 0.061, "パターンA：報酬を獲得しました の×")
+                // The x sits at y≈6% on the Japanese card and y≈5% on the
+                // English one; alternate the two heights so a near miss
+                // does not repeat forever at the same spot.
+                val y = if (aTapCount % 2 == 0) 0.061 else 0.046
+                aTapCount++
+                tap(0.942, y, "パターンA：報酬テキスト横の×")
             }
             return
         }
