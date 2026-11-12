@@ -101,6 +101,10 @@ class AdCloserService : AccessibilityService() {
     private var excursionTries = 0
     // Pattern F state (v1.7): Meta Audience Network end card.
     private var fTapCount = 0
+    // Pattern G state (v2.2): welcome-bonus interactive end card.
+    private var gTapCount = 0
+    private var lastGTapAt = 0L
+    private var gCardSince = 0L
     private var lastFTapAt = 0L
     private var fCardSince = 0L
     // Pattern F pod-advance state (v1.8).
@@ -306,6 +310,9 @@ class AdCloserService : AccessibilityService() {
         fCounterText = ""
         fStageSince = 0L
         fAdvanceTaps = 0
+        gTapCount = 0
+        lastGTapAt = 0L
+        gCardSince = 0L
         LogStore.add(this, "$why：広告の監視を開始")
     }
 
@@ -503,9 +510,21 @@ class AdCloserService : AccessibilityService() {
         val metaMarker = snap.has("Ads served by Meta")
         val metaCounter = snap.hasRegex("Ad \\d+ of \\d+")
         val metaCard = metaMarker && !metaCounter
+        // Pattern G markers (v2.2, user screenshot 2026-11-12): an
+        // interactive "welcome bonus" end card — a big red 獲得 button
+        // (a store trap; never tap), a small 閉じる link BELOW it at
+        // the bottom centre (NOT the pattern-D corner pill, and the
+        // user explicitly said not to use it), and the real close
+        // control: an x at the top-right (about (93%, 6%)). None of
+        // the A–F markers match this card, so v2.1 sat idle.
+        val welcomeCard = !rewardReady &&
+            (snap.has("ウェルカムボーナス") || snap.has("豪華報酬") ||
+                (snap.has("獲得") && closeBounds != null && !closeInCorner))
 
         if (!sessionActive) {
-            if (Prefs.resident(this) && (rewardReady || endCard || closeInCorner || metaCard)) {
+            if (Prefs.resident(this) &&
+                (rewardReady || endCard || closeInCorner || metaCard || welcomeCard)
+            ) {
                 startSession(now(), "広告画面を検知")
             }
             return
@@ -628,6 +647,30 @@ class AdCloserService : AccessibilityService() {
                 fAdvanceTaps++
                 fStageSince = now()
                 tap(0.922, 0.103, "パターンF：次の広告へ（右上）")
+            }
+            return
+        }
+
+        // Pattern G (v2.2): welcome-bonus card — tap ONLY the
+        // top-right x, never the 獲得 button and never the bottom
+        // 閉じる link (user instruction 2026-11-12). The x may stay
+        // inactive during the card's countdown, so wait for the guard
+        // period since the session start, or for the card to have
+        // been on screen continuously for 12s (manual-arm-late case).
+        if (welcomeCard && Prefs.patternB(this)) {
+            noAdSignalSince = 0L
+            if (gCardSince == 0L) gCardSince = now()
+            val guardPassed =
+                (now() - adStartAt) / 1000 >= Prefs.guardSeconds(this)
+            val settled = now() - gCardSince >= 12_000
+            if (guardPassed || settled) {
+                if (gTapCount < 3 && now() - lastGTapAt > 4000) {
+                    lastGTapAt = now()
+                    gTapCount++
+                    tap(0.927, 0.064, "パターンG：右上の×（ウェルカムボーナス広告）")
+                } else if (gTapCount >= 3 && now() - lastGTapAt > 8000) {
+                    endSession("パターンG：右上の×を押せませんでした（手動で閉じてください）")
+                }
             }
             return
         }
