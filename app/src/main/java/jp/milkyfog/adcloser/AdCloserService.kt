@@ -259,6 +259,7 @@ class AdCloserService : AccessibilityService() {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 70))
             .build()
+        gestureGuardUntil = now() + 300
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
     }
@@ -280,6 +281,7 @@ class AdCloserService : AccessibilityService() {
             .addStroke(stroke(0))
             .addStroke(stroke(400))
             .build()
+        gestureGuardUntil = now() + 900
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
     }
@@ -289,6 +291,7 @@ class AdCloserService : AccessibilityService() {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 70))
             .build()
+        gestureGuardUntil = now() + 300
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why をタップ")
     }
@@ -354,6 +357,12 @@ class AdCloserService : AccessibilityService() {
     // in seconds); only start / stop / auto-stop are.
     private var clickerLoopRunning = false
 
+    // Until this time the clicker must not dispatch: another gesture
+    // (farm / ad closing) is in flight, and a clicker tap landing
+    // mid-gesture cancels it (v2.6 — the user's 2026-11-12 log showed
+    // repeated タップがキャンセルされました while both ran).
+    private var gestureGuardUntil = 0L
+
     private val clickerRunnable = object : Runnable {
         override fun run() {
             if (!Control.clickerOn) {
@@ -373,6 +382,12 @@ class AdCloserService : AccessibilityService() {
                 Control.clickerOn = false
                 clickerLoopRunning = false
                 LogStore.add(this@AdCloserService, "オートクリッカー：設定時間になったため自動停止しました")
+                return
+            }
+            if (now() < gestureGuardUntil) {
+                // Another gesture is in flight; skip this beat rather
+                // than cancel it.
+                handler.postDelayed(this, 100)
                 return
             }
             val fx = Prefs.clickerX(this@AdCloserService).toDouble()
@@ -1280,25 +1295,12 @@ class AdCloserService : AccessibilityService() {
             h[0] in 15f..47f && h[1] > 0.5f && h[2] > 0.5f
         }
         if (rConfirm > 0.5 && rRefresh > 0.4) {
-            // v1.3: the スキップ checkbox above 確認 (box at ~(0.64, 0.56))
-            // matters. With skip OFF the ejection animation keeps the
-            // screen from advancing even when 確認 is tapped — the user
-            // watched it stall on 2026-11-12 and pointed at the skip.
-            // A checked box carries a bright check mark; an unchecked one
-            // is uniformly dark (calibrated on the user's two roulette
-            // screenshots: bright share 0.11 checked vs 0.00 unchecked).
-            // Tap the box only when it is confidently dark, then let a
-            // later frame tap 確認.
-            val skipBright = fractionWhere(bmp, 0.618, 0.658, 0.544, 0.572) { h ->
-                h[2] > 0.65f
-            }
-            if (skipBright < 0.02) {
-                farmAct("ルーレット", "rou-skip") {
-                    tap(0.637, 0.558, "周回：ルーレットのスキップをオン")
-                }
-            } else {
-                farmAct("ルーレット", "rou") { tapButton(0.717, 0.623, "周回：ルーレットの確認") }
-            }
+            // v2.6 (user correction 2026-11-12): NEVER tap the スキップ
+            // checkbox. The v1.3 skip-first logic was wrong — what
+            // advances this panel is the 確認 button below it. The
+            // skip-tap loop plus clicker-caused gesture cancellations
+            // stalled farming on this panel.
+            farmAct("ルーレット", "rou") { tapButton(0.717, 0.623, "周回：ルーレットの確認") }
             return
         }
 
