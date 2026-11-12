@@ -45,12 +45,62 @@ class OverlayService : Service() {
     private var targetView: TargetView? = null
     private var targetParams: WindowManager.LayoutParams? = null
     private val refreshHandler = Handler(Looper.getMainLooper())
+    private var consumedNudgeAt = 0L
     private val labelRefresh = object : Runnable {
         override fun run() {
             farmButton?.text = farmLabel()
             syncClickerUi()
+            publishPanelRect()
+            if (Control.panelNudgeAt != consumedNudgeAt) {
+                consumedNudgeAt = Control.panelNudgeAt
+                nudgePanel()
+            }
             refreshHandler.postDelayed(this, 1000)
         }
+    }
+
+    /** Keep the accessibility service aware of where the panel is, so
+     *  its taps never land on the panel itself (v2.7). */
+    private fun publishPanelRect() {
+        val view = rootView ?: return
+        val lp = params ?: return
+        if (view.width > 0 && view.height > 0) {
+            Control.panelRect = android.graphics.Rect(
+                lp.x, lp.y, lp.x + view.width, lp.y + view.height
+            )
+        }
+    }
+
+    /**
+     * Move the panel to a screen corner away from the blocked tap
+     * point (v2.7). Prefers the top corner on the opposite side; if
+     * that still covers the point (point near the top), uses the
+     * bottom corner on the opposite side instead.
+     */
+    private fun nudgePanel() {
+        val wm = windowManager ?: return
+        val view = rootView ?: return
+        val lp = params ?: return
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+        val w = view.width
+        val h = view.height
+        if (w == 0 || h == 0) return
+        val bx = (Control.blockedTapFx * screenW).toInt()
+        val by = (Control.blockedTapFy * screenH).toInt()
+        val left = Control.blockedTapFx >= 0.5f
+        var nx = if (left) 8 else screenW - w - 8
+        var ny = 8
+        if (bx in nx until nx + w && by in ny until ny + h) {
+            ny = screenH - h - 8
+        }
+        lp.x = nx.coerceIn(0, screenW - w)
+        lp.y = ny.coerceIn(0, screenH - h)
+        runCatching { wm.updateViewLayout(view, lp) }
+        getSharedPreferences("overlay", MODE_PRIVATE).edit()
+            .putInt("x", lp.x).putInt("y", lp.y).apply()
+        publishPanelRect()
+        LogStore.add(this, "フローティングパネルを退避しました")
     }
 
     private fun farmLabel(): String =
@@ -144,6 +194,21 @@ class OverlayService : Service() {
                     if (targetView == null) showTarget()
                     Control.clickerStartedAt = SystemClock.elapsedRealtime()
                     Control.clickerOn = true
+                    // If the marker sits under this panel, the clicks
+                    // would press the panel's own buttons: move the
+                    // panel out of the way first (v2.7).
+                    val rect = Control.panelRect
+                    if (rect != null) {
+                        val mx = (Prefs.clickerX(this@OverlayService) *
+                            resources.displayMetrics.widthPixels).toInt()
+                        val my = (Prefs.clickerY(this@OverlayService) *
+                            resources.displayMetrics.heightPixels).toInt()
+                        if (rect.contains(mx, my)) {
+                            Control.blockedTapFx = Prefs.clickerX(this@OverlayService)
+                            Control.blockedTapFy = Prefs.clickerY(this@OverlayService)
+                            nudgePanel()
+                        }
+                    }
                     LogStore.add(this@OverlayService, "フローティングボタンで連打を開始")
                 }
                 syncClickerUi()
@@ -323,6 +388,7 @@ class OverlayService : Service() {
         refreshHandler.removeCallbacks(labelRefresh)
         // No panel = no visible way to stop the clicker: stop it too.
         Control.clickerOn = false
+        Control.panelRect = null
         hideTarget()
         isRunning = false
         rootView?.let { runCatching { windowManager?.removeView(it) } }

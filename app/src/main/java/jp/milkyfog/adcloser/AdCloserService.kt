@@ -252,7 +252,31 @@ class AdCloserService : AccessibilityService() {
             }
         }
 
+    private var lastPanelBlockLogAt = 0L
+
+    /**
+     * True when the tap point is covered by our own floating panel
+     * (v2.7): the tap would press the panel's buttons instead of the
+     * game — the user's "buttons get pressed by themselves" bug.
+     * Refusing also asks the panel to move out of the way.
+     */
+    private fun panelBlocks(fx: Double, fy: Double, why: String): Boolean {
+        val rect = Control.panelRect ?: return false
+        val x = (screenW() * fx).toInt()
+        val y = (screenH() * fy).toInt()
+        if (!rect.contains(x, y)) return false
+        Control.blockedTapFx = fx.toFloat()
+        Control.blockedTapFy = fy.toFloat()
+        Control.panelNudgeAt = now()
+        if (now() - lastPanelBlockLogAt > 5_000) {
+            lastPanelBlockLogAt = now()
+            LogStore.add(this, "$why：タップ先がフローティングパネルと重なっていたため中止し、パネルを退避します")
+        }
+        return true
+    }
+
     private fun tap(xFraction: Double, yFraction: Double, why: String) {
+        if (panelBlocks(xFraction, yFraction, why)) return
         val x = (screenW() * xFraction).toFloat()
         val y = (screenH() * yFraction).toFloat()
         val path = Path().apply { moveTo(x, y) }
@@ -272,6 +296,7 @@ class AdCloserService : AccessibilityService() {
      * as one gesture. Card picks keep the proven single tap.
      */
     private fun tapButton(xFraction: Double, yFraction: Double, why: String) {
+        if (panelBlocks(xFraction, yFraction, why)) return
         val x = (screenW() * xFraction).toFloat()
         val y = (screenH() * yFraction).toFloat()
         fun stroke(start: Long) = GestureDescription.StrokeDescription(
@@ -287,6 +312,11 @@ class AdCloserService : AccessibilityService() {
     }
 
     private fun tapRect(r: Rect, why: String) {
+        if (panelBlocks(
+                r.centerX().toDouble() / screenW(),
+                r.centerY().toDouble() / screenH(), why
+            )
+        ) return
         val path = Path().apply { moveTo(r.centerX().toFloat(), r.centerY().toFloat()) }
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0, 70))
@@ -389,6 +419,22 @@ class AdCloserService : AccessibilityService() {
                 // than cancel it.
                 handler.postDelayed(this, 100)
                 return
+            }
+            // Never let the clicker press the floating panel's own
+            // buttons: if the marker sits under the panel, skip beats
+            // (the panel is asked to move away) instead of toggling
+            // the panel's controls.
+            val rect = Control.panelRect
+            if (rect != null) {
+                val px = (screenW() * Prefs.clickerX(this@AdCloserService)).toInt()
+                val py = (screenH() * Prefs.clickerY(this@AdCloserService)).toInt()
+                if (rect.contains(px, py)) {
+                    Control.blockedTapFx = Prefs.clickerX(this@AdCloserService)
+                    Control.blockedTapFy = Prefs.clickerY(this@AdCloserService)
+                    Control.panelNudgeAt = now()
+                    handler.postDelayed(this, 300)
+                    return
+                }
             }
             val fx = Prefs.clickerX(this@AdCloserService).toDouble()
             val fy = Prefs.clickerY(this@AdCloserService).toDouble()
@@ -1122,6 +1168,41 @@ class AdCloserService : AccessibilityService() {
     }
 
     /** Majority colour rank of one card body around centre [cx]; 0 if unclear. */
+    /**
+     * Bucketed average colour of a card's icon (v2.7), as a short
+     * signature string. The icon circle sits at about (cx, 37.5%);
+     * the inner box avoids the animated rim/sparkles, so the same
+     * item reads the same signature frame after frame while a
+     * different item (capsule, wing, swatter, bone…) does not.
+     */
+    private fun iconSig(bmp: Bitmap, cx: Double): String {
+        var sr = 0L
+        var sg = 0L
+        var sb = 0L
+        var n = 0
+        var fx = cx - 0.022
+        while (fx <= cx + 0.022) {
+            var fy = 0.355
+            while (fy <= 0.395) {
+                val c = bmp.getPixel(
+                    (fx * bmp.width).toInt().coerceIn(0, bmp.width - 1),
+                    (fy * bmp.height).toInt().coerceIn(0, bmp.height - 1)
+                )
+                sr += android.graphics.Color.red(c)
+                sg += android.graphics.Color.green(c)
+                sb += android.graphics.Color.blue(c)
+                n++
+                fy += 0.008
+            }
+            fx += 0.008
+        }
+        if (n == 0) return "000"
+        val r = (sr / n).toInt() shr 6
+        val g = (sg / n).toInt() shr 6
+        val b = (sb / n).toInt() shr 6
+        return "$r$g$b"
+    }
+
     private fun cardRank(bmp: Bitmap, cx: Double): Int = cardRankShare(bmp, cx).first
 
     /**
@@ -1250,9 +1331,23 @@ class AdCloserService : AccessibilityService() {
                 val order = intArrayOf(1, 0, 2) // tie: middle, left, right
                 val pick = order.first { ranks3[it] == best }
                 val names = arrayOf("", "緑", "青", "紫", "黄", "赤")
-                farmAct("ステータス強化", "sel:" + ranks3.joinToString(",")) {
+                // v2.7: the fingerprint gains an icon signature. The
+                // user's 2026-11-12 log showed the guard suppressing a
+                // selection screen after repeated (82%, 45%) taps —
+                // with ranks alone, a stuck screen and a fresh screen
+                // that rolled the same colours are indistinguishable.
+                // The signature (bucketed average colour of each
+                // card's icon) separates them: same items, same
+                // signature; new items, new fingerprint, fresh count.
+                val sig = centers3.joinToString("-") { iconSig(bmp, it) }
+                farmAct("ステータス強化", "sel:" + ranks3.joinToString(",") + ":" + sig) {
                     LogStore.add(this, "周回：ステータス強化で「${names[best]}」を選択")
-                    tap(centers3[pick], 0.45, "周回：カード選択")
+                    // Retry attempts shift the tap point (the victory
+                    // branch's v1.2 lesson): stem centre, then the icon
+                    // circle, then lower on the card.
+                    val ys = doubleArrayOf(0.45, 0.375, 0.52)
+                    val y = ys[minOf(farmSigCount - 1, 2)]
+                    tap(centers3[pick], y, "周回：カード選択")
                 }
             } else if (share2 > 0.0) {
                 farmAct("リザルト", "res:${info2[0].first},${info2[1].first}") {

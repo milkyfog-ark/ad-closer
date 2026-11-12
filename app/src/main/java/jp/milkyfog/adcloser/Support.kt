@@ -1,6 +1,7 @@
 package jp.milkyfog.adcloser
 
 import android.content.Context
+import android.graphics.Rect
 import android.content.SharedPreferences
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -98,6 +99,23 @@ object Control {
 
     /** elapsedRealtime when the clicker was started (for the time limit). */
     @Volatile var clickerStartedAt: Long = 0L
+
+    /**
+     * The floating panel's on-screen rectangle in pixels (v2.7),
+     * published by OverlayService. Injected taps are delivered to the
+     * topmost window, so a tap aimed at the game but covered by the
+     * panel would press the panel's own buttons instead — the service
+     * checks every tap against this rect and refuses + asks the panel
+     * to move out of the way.
+     */
+    @Volatile var panelRect: Rect? = null
+
+    /** Timestamp of the latest "panel, move away" request (v2.7). */
+    @Volatile var panelNudgeAt: Long = 0L
+
+    /** The tap point (screen fractions) the panel must move away from. */
+    @Volatile var blockedTapFx: Float = 0f
+    @Volatile var blockedTapFy: Float = 0f
 }
 
 /** Small persistent action log so the user can see what the app did, and report it back. */
