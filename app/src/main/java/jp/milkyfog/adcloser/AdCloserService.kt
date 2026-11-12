@@ -106,6 +106,33 @@ class AdCloserService : AccessibilityService() {
     private var fCounterText = ""
     private var fStageSince = 0L
     private var fAdvanceTaps = 0
+    // Multi-target state (v2.0): the package the current session belongs
+    // to (returns go there, not always to the game), the package of the
+    // window being evaluated, and the last foreign app recorded for the
+    // settings shortcut.
+    private var sessionPkg: String = GAME_PKG
+    private var currentPkg: String = ""
+    private var lastRecordedForeign = ""
+    private var lastSpeedTapAt = 0L
+
+    /** Ad-closing targets: Cell Survivor plus the user's checked apps. */
+    private fun isTarget(pkg: String): Boolean =
+        pkg == GAME_PKG || pkg in Prefs.targetPackages(this)
+
+    /** Remember the last ordinary app seen in the foreground so the
+     *  settings screen can offer "add the app you just used". */
+    private fun recordLastForeign(pkg: String) {
+        if (pkg == packageName || pkg in RECENTS_PKGS || pkg == STORE_PKG) return
+        if (pkg == lastRecordedForeign) return
+        lastRecordedForeign = pkg
+        val label = try {
+            val ai = packageManager.getApplicationInfo(pkg, 0)
+            packageManager.getApplicationLabel(ai).toString()
+        } catch (e: Exception) {
+            pkg
+        }
+        Prefs.setLastForeign(this, pkg, label)
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -127,7 +154,8 @@ class AdCloserService : AccessibilityService() {
         val cls = event.className?.toString() ?: return
         lastEventClass = cls
         val pkg = event.packageName?.toString() ?: return
-        if (pkg == GAME_PKG && Control.manualArmAt == 0L) {
+        currentPkg = pkg
+        if (isTarget(pkg) && Control.manualArmAt == 0L) {
             val lower = cls.lowercase()
             if (AD_CLASS_HINTS.any { cls.contains(it) } || lower.contains("adactivity")) {
                 if (!sessionActive && Prefs.master(this) && Prefs.resident(this)) {
@@ -253,6 +281,7 @@ class AdCloserService : AccessibilityService() {
 
     private fun startSession(at: Long, why: String) {
         sessionActive = true
+        if (isTarget(currentPkg)) sessionPkg = currentPkg
         adStartAt = at
         lastATapAt = 0L
         aTapCount = 0
@@ -306,18 +335,20 @@ class AdCloserService : AccessibilityService() {
 
         val root = rootInActiveWindow ?: return
         val pkg = root.packageName?.toString() ?: return
+        currentPkg = pkg
+        recordLastForeign(pkg)
         val snap = snapshot(root)
 
         when {
-            pkg == GAME_PKG -> {
+            isTarget(pkg) -> {
                 if (returningFromStore) {
-                    // We made it back to the game from the store.
+                    // We made it back to the target app from the store.
                     returningFromStore = false
                     storeExcursions++
                     topLeftStage = 0
                     noAdSignalSince = 0L
                     if (eStage == 1) eStage = 2
-                    LogStore.add(this, "ゲームに戻りました。×の出現を待ちます")
+                    LogStore.add(this, "対象アプリに戻りました。×の出現を待ちます")
                 }
                 if (returningFromExcursion) {
                     // Back from the advertiser's app (pattern E).
@@ -327,10 +358,10 @@ class AdCloserService : AccessibilityService() {
                         eStage = 2
                         lastETapAt = 0L
                     }
-                    LogStore.add(this, "パターンE：広告主アプリからゲームに戻りました")
+                    LogStore.add(this, "パターンE：広告主アプリから対象アプリに戻りました")
                 }
                 handleGame(snap)
-                maybeFarmTick()
+                if (pkg == GAME_PKG) maybeFarmTick()
             }
             pkg == STORE_PKG -> {
                 if (sessionActive && Prefs.storeRecovery(this)) handleStore(snap)
@@ -357,17 +388,17 @@ class AdCloserService : AccessibilityService() {
             returningFromExcursion = true
             excursionAt = now()
             excursionTries = 0
-            LogStore.add(this, "パターンE：別アプリ（$pkg）に移りました。ゲームに戻します")
+            LogStore.add(this, "パターンE：別アプリ（$pkg）に移りました。対象アプリに戻します")
             return
         }
         val waited = now() - excursionAt
         if (waited > 1800 && excursionTries < 3) {
             excursionTries++
             excursionAt = now()
-            launchGameIntent()
+            launchAppIntent()
         } else if (excursionTries >= 3 && waited > 3000) {
             returningFromExcursion = false
-            LogStore.add(this, "パターンE：自動でゲームに戻れませんでした。手動でセルサバイバーに戻ってください")
+            LogStore.add(this, "パターンE：自動で対象アプリに戻れませんでした。手動で元のアプリに戻ってください")
         }
     }
 
@@ -624,24 +655,24 @@ class AdCloserService : AccessibilityService() {
             returnStep = 0
             returnStepAt = now()
             lastStoreActionAt = now()
-            LogStore.add(this, "パターンC：ストア（全画面）からゲームへの復帰を開始")
-            launchGameIntent()
+            LogStore.add(this, "パターンC：ストア（全画面）から対象アプリへの復帰を開始")
+            launchAppIntent()
         }
     }
 
-    /** Bring Cell Survivor to the front via its launch intent. */
-    private fun launchGameIntent(): Boolean {
+    /** Bring the session's target app to the front via its launch intent. */
+    private fun launchAppIntent(): Boolean {
         return try {
-            val intent = packageManager.getLaunchIntentForPackage(GAME_PKG)
+            val intent = packageManager.getLaunchIntentForPackage(sessionPkg)
             if (intent == null) {
-                LogStore.add(this, "ゲームの起動インテントが見つかりません")
+                LogStore.add(this, "対象アプリの起動インテントが見つかりません")
                 false
             } else {
                 intent.addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                 )
                 startActivity(intent)
-                LogStore.add(this, "ゲームを直接呼び戻しました（起動インテント）")
+                LogStore.add(this, "対象アプリを直接呼び戻しました（起動インテント）")
                 true
             }
         } catch (e: Exception) {
@@ -1015,6 +1046,33 @@ class AdCloserService : AccessibilityService() {
             return
         }
 
+        // v2.0: keep the battle at double speed (user request
+        // 2026-11-12). The enemy-speed icon at the top-left shows a
+        // warm-coloured "x2" under its label while 2x is active; when
+        // it is missing, tap the icon. Calibrated on the user's
+        // screenshots: the icon's green share (0.20+) and the label's
+        // warm share (0.21+) mark the in-battle HUD — the stage-select
+        // screen reads ~0 on both, so it is never tapped — and the
+        // strip under the label reads 0.00 without the x2 versus
+        // 0.08+ with it (threshold 0.03).
+        val iconGreen = fractionWhere(bmp, 0.03, 0.14, 0.185, 0.235) { h ->
+            h[0] in 55f..115f && h[1] > 0.35f && h[2] > 0.25f
+        }
+        if (iconGreen > 0.10) {
+            val labelWarm = fractionWhere(bmp, 0.005, 0.165, 0.228, 0.253) { h ->
+                h[0] in 18f..58f && h[1] > 0.35f && h[2] > 0.20f
+            }
+            if (labelWarm > 0.12) {
+                val x2Warm = fractionWhere(bmp, 0.05, 0.125, 0.24, 0.275) { h ->
+                    h[0] in 18f..58f && h[1] > 0.35f && h[2] > 0.20f
+                }
+                if (x2Warm < 0.03 && now() - lastSpeedTapAt > 20_000) {
+                    lastSpeedTapAt = now()
+                    tap(0.082, 0.21, "周回：敵の移動速度アイコン（×2化）")
+                }
+            }
+        }
+
         // No known screen in this frame: the previous screen is gone, so
         // forget its fingerprint (v1.2 guard reset) and any suppression.
         farmFingerprint = ""
@@ -1048,20 +1106,20 @@ class AdCloserService : AccessibilityService() {
                     // and retry the launch intent instead.
                     returnStep = 3
                     returnStepAt = now()
-                    launchGameIntent()
+                    launchAppIntent()
                 }
             }
             2 -> if (waited > 2000) {
                 returnStep = 3
                 returnStepAt = now()
-                launchGameIntent()
+                launchAppIntent()
             }
             3 -> if (waited > 2500) {
                 returningFromStore = false
                 returnBlocked = true
                 LogStore.add(
                     this,
-                    "自動でゲームに戻れませんでした。履歴からセルサバイバーを選んでください（監視は続けます）"
+                    "自動で対象アプリに戻れませんでした。履歴から元のアプリを選んでください（監視は続けます）"
                 )
             }
         }

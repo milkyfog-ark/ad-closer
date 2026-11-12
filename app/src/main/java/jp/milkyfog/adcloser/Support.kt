@@ -6,6 +6,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** Cell Survivor's package name. It is always an ad-closer target. */
+const val GAME_PACKAGE = "defense.roguelike.cell.shoot.survivor"
+
 /** User settings, stored in SharedPreferences. */
 object Prefs {
     private const val FILE = "settings"
@@ -36,6 +39,25 @@ object Prefs {
     fun guardSeconds(ctx: Context): Int = sp(ctx).getInt("guard_seconds", 30)
     fun setGuardSeconds(ctx: Context, v: Int) =
         sp(ctx).edit().putInt("guard_seconds", v).apply()
+
+    /**
+     * Extra target apps for the ad closer (v2.0). Cell Survivor is
+     * always a target and is not stored here. The set persists, so an
+     * app the user checks once keeps working without re-selecting it.
+     */
+    fun targetPackages(ctx: Context): Set<String> =
+        sp(ctx).getStringSet("target_packages", null) ?: emptySet()
+    fun setTargetPackages(ctx: Context, v: Set<String>) =
+        sp(ctx).edit().putStringSet("target_packages", v).apply()
+
+    /** The last ordinary app the user had in the foreground (v2.0 shortcut). */
+    fun lastForeignPkg(ctx: Context): String =
+        sp(ctx).getString("last_foreign_pkg", "") ?: ""
+    fun lastForeignLabel(ctx: Context): String =
+        sp(ctx).getString("last_foreign_label", "") ?: ""
+    fun setLastForeign(ctx: Context, pkg: String, label: String) =
+        sp(ctx).edit().putString("last_foreign_pkg", pkg)
+            .putString("last_foreign_label", label).apply()
 }
 
 /** In-process commands from the overlay / main screen to the accessibility service. */
