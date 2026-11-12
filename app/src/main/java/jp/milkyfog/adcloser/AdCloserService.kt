@@ -12,6 +12,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import kotlin.random.Random
 
 /**
  * Watches only Cell Survivor (and, during an ad session, the Play Store /
@@ -318,7 +319,79 @@ class AdCloserService : AccessibilityService() {
 
     // ---------------- main evaluation ----------------
 
+    // ---------------- auto-clicker engine (v2.1) ----------------
+    // Independent of the ad sessions: taps the marker position at the
+    // configured rate while Control.clickerOn is set from the panel.
+    // Individual taps are NOT logged (they would flood the 80-line log
+    // in seconds); only start / stop / auto-stop are.
+    private var clickerLoopRunning = false
+
+    private val clickerRunnable = object : Runnable {
+        override fun run() {
+            if (!Control.clickerOn) {
+                clickerLoopRunning = false
+                return
+            }
+            if (!Prefs.master(this@AdCloserService)) {
+                Control.clickerOn = false
+                clickerLoopRunning = false
+                LogStore.add(this@AdCloserService, "オートクリッカー：全体オフのため停止しました")
+                return
+            }
+            val limitMin = Prefs.clickerLimitMinutes(this@AdCloserService)
+            if (limitMin > 0 &&
+                SystemClock.elapsedRealtime() - Control.clickerStartedAt > limitMin * 60_000L
+            ) {
+                Control.clickerOn = false
+                clickerLoopRunning = false
+                LogStore.add(this@AdCloserService, "オートクリッカー：設定時間になったため自動停止しました")
+                return
+            }
+            val fx = Prefs.clickerX(this@AdCloserService).toDouble()
+            val fy = Prefs.clickerY(this@AdCloserService).toDouble()
+            val x = (screenW() * fx).toFloat()
+            val y = (screenH() * fy).toFloat()
+            val gesture = GestureDescription.Builder()
+                .addStroke(
+                    GestureDescription.StrokeDescription(
+                        Path().apply { moveTo(x, y) }, 0, 30
+                    )
+                )
+                .build()
+            dispatchGesture(gesture, null, null)
+            handler.postDelayed(this, nextClickerDelayMs())
+        }
+    }
+
+    private fun nextClickerDelayMs(): Long {
+        val base = if (Prefs.clickerUseCps(this)) {
+            1000.0 / Prefs.clickerCps(this).coerceAtLeast(1)
+        } else {
+            Prefs.clickerIntervalMs(this).toDouble()
+        }
+        val jitter = Prefs.clickerJitterPct(this)
+        val factor = if (jitter > 0) {
+            1.0 + (Random.nextDouble() * 2.0 - 1.0) * jitter / 100.0
+        } else {
+            1.0
+        }
+        return (base * factor).toLong().coerceAtLeast(20L)
+    }
+
+    private fun syncClicker() {
+        if (Control.clickerOn && !clickerLoopRunning) {
+            clickerLoopRunning = true
+            handler.post(clickerRunnable)
+            LogStore.add(this, "オートクリッカーを開始しました")
+        } else if (!Control.clickerOn && clickerLoopRunning) {
+            clickerLoopRunning = false
+            handler.removeCallbacks(clickerRunnable)
+            LogStore.add(this, "オートクリッカーを終了しました")
+        }
+    }
+
     private fun evaluate() {
+        syncClicker()
         if (!Prefs.master(this)) return
 
         if (Control.emergencySuspend) {

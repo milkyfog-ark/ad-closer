@@ -1,8 +1,11 @@
 package jp.milkyfog.adcloser
 
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.IBinder
@@ -10,6 +13,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.LinearLayout
@@ -36,10 +40,15 @@ class OverlayService : Service() {
     private var params: WindowManager.LayoutParams? = null
     private var armButton: Button? = null
     private var farmButton: Button? = null
+    private var targetButton: Button? = null
+    private var clickButton: Button? = null
+    private var targetView: TargetView? = null
+    private var targetParams: WindowManager.LayoutParams? = null
     private val refreshHandler = Handler(Looper.getMainLooper())
     private val labelRefresh = object : Runnable {
         override fun run() {
             farmButton?.text = farmLabel()
+            syncClickerUi()
             refreshHandler.postDelayed(this, 1000)
         }
     }
@@ -118,19 +127,45 @@ class OverlayService : Service() {
                 )
             }
         }
+        targetButton = Button(this).apply {
+            text = "連打の場所指定"
+            setOnClickListener {
+                if (targetView == null) showTarget() else hideTarget()
+                syncClickerUi()
+            }
+        }
+        clickButton = Button(this).apply {
+            text = "連打開始"
+            setOnClickListener {
+                if (Control.clickerOn) {
+                    Control.clickerOn = false
+                    LogStore.add(this@OverlayService, "フローティングボタンで連打を終了")
+                } else {
+                    if (targetView == null) showTarget()
+                    Control.clickerStartedAt = SystemClock.elapsedRealtime()
+                    Control.clickerOn = true
+                    LogStore.add(this@OverlayService, "フローティングボタンで連打を開始")
+                }
+                syncClickerUi()
+            }
+        }
         val stopButton = Button(this).apply {
             text = "全停止"
             setOnClickListener {
                 Control.emergencySuspend = true
                 Control.manualArmAt = 0L
+                Control.clickerOn = false
                 Prefs.setFarm(this@OverlayService, false)
                 armButton?.text = "広告開始"
                 farmButton?.text = farmLabel()
+                syncClickerUi()
                 LogStore.add(this@OverlayService, "フローティングボタンで全停止")
             }
         }
         layout.addView(armButton)
         layout.addView(farmButton)
+        layout.addView(targetButton)
+        layout.addView(clickButton)
         layout.addView(stopButton)
         refreshHandler.post(labelRefresh)
         rootView = layout
@@ -195,11 +230,135 @@ class OverlayService : Service() {
         }
     }
 
+    // ---------------- auto-clicker target marker (v2.1) ----------------
+
+    private fun targetSizePx(): Int = (64 * resources.displayMetrics.density).toInt()
+
+    private fun showTarget() {
+        val wm = windowManager ?: return
+        if (targetView != null) return
+        val size = targetSizePx()
+        val view = TargetView(this)
+        val lp = WindowManager.LayoutParams(
+            size, size,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        val screenW = resources.displayMetrics.widthPixels
+        val screenH = resources.displayMetrics.heightPixels
+        lp.x = (Prefs.clickerX(this) * screenW).toInt() - size / 2
+        lp.y = (Prefs.clickerY(this) * screenH).toInt() - size / 2
+        lp.x = lp.x.coerceIn(0, screenW - size)
+        lp.y = lp.y.coerceIn(0, screenH - size)
+        targetView = view
+        targetParams = lp
+        runCatching { wm.addView(view, lp) }
+
+        // Drag the marker to position it; the centre is the tap point.
+        var downRawX = 0f
+        var downRawY = 0f
+        var startX = 0
+        var startY = 0
+        view.setOnTouchListener { _, ev ->
+            when (ev.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    downRawX = ev.rawX
+                    downRawY = ev.rawY
+                    startX = lp.x
+                    startY = lp.y
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    lp.x = (startX + (ev.rawX - downRawX).toInt()).coerceIn(0, screenW - size)
+                    lp.y = (startY + (ev.rawY - downRawY).toInt()).coerceIn(0, screenH - size)
+                    runCatching { wm.updateViewLayout(view, lp) }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    Prefs.setClickerPos(
+                        this@OverlayService,
+                        (lp.x + size / 2).toFloat() / screenW,
+                        (lp.y + size / 2).toFloat() / screenH
+                    )
+                    true
+                }
+                else -> false
+            }
+        }
+        LogStore.add(this, "連打のマトを表示（ドラッグで位置指定）")
+    }
+
+    private fun hideTarget() {
+        targetView?.let { runCatching { windowManager?.removeView(it) } }
+        targetView = null
+        targetParams = null
+    }
+
+    /**
+     * Keep the panel labels and the marker's touchability in sync with
+     * the clicker state. While clicking, the marker must NOT be
+     * touchable — otherwise it would swallow the very taps it aims.
+     */
+    private fun syncClickerUi() {
+        val on = Control.clickerOn
+        clickButton?.text = if (on) "連打終了" else "連打開始"
+        targetButton?.text = if (targetView == null) "連打の場所指定" else "マトをしまう"
+        val view = targetView ?: return
+        val lp = targetParams ?: return
+        val wantFlags = if (on) {
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        } else {
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        }
+        if (lp.flags != wantFlags) {
+            lp.flags = wantFlags
+            view.alpha = if (on) 0.55f else 1f
+            runCatching { windowManager?.updateViewLayout(view, lp) }
+        }
+    }
+
     override fun onDestroy() {
         refreshHandler.removeCallbacks(labelRefresh)
+        // No panel = no visible way to stop the clicker: stop it too.
+        Control.clickerOn = false
+        hideTarget()
         isRunning = false
         rootView?.let { runCatching { windowManager?.removeView(it) } }
         rootView = null
         super.onDestroy()
+    }
+}
+
+/** Draggable target (mato) graphic for the auto-clicker: ring + dot + crosshair. */
+private class TargetView(ctx: Context) : View(ctx) {
+    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(255, 90, 40)
+        style = Paint.Style.STROKE
+        strokeWidth = 5f
+    }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(255, 90, 40)
+        style = Paint.Style.FILL
+    }
+    private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(60, 255, 90, 40)
+        style = Paint.Style.FILL
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        val cx = width / 2f
+        val cy = height / 2f
+        val r = minOf(cx, cy) - 4f
+        canvas.drawCircle(cx, cy, r, halo)
+        canvas.drawCircle(cx, cy, r, ring)
+        canvas.drawCircle(cx, cy, r * 0.45f, ring)
+        canvas.drawCircle(cx, cy, 5f, dot)
+        canvas.drawLine(cx - r, cy, cx - r * 0.55f, cy, ring)
+        canvas.drawLine(cx + r * 0.55f, cy, cx + r, cy, ring)
+        canvas.drawLine(cx, cy - r, cx, cy - r * 0.55f, ring)
+        canvas.drawLine(cx, cy + r * 0.55f, cx, cy + r, ring)
     }
 }

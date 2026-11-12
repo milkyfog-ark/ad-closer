@@ -22,6 +22,10 @@ class MainActivity : Activity() {
     private lateinit var logText: TextView
     private lateinit var targetsText: TextView
     private lateinit var btnAddLast: Button
+    private lateinit var seekClicker: SeekBar
+    private lateinit var clickerLabel: TextView
+    private lateinit var jitterLabel: TextView
+    private lateinit var limitLabel: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,6 +84,61 @@ class MainActivity : Activity() {
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
 
+        // ---- auto-clicker settings (v2.1) ----
+        clickerLabel = findViewById(R.id.clickerLabel)
+        jitterLabel = findViewById(R.id.jitterLabel)
+        limitLabel = findViewById(R.id.limitLabel)
+        seekClicker = findViewById(R.id.seekClicker)
+        val swMode = findViewById<Switch>(R.id.swClickerMode)
+        swMode.isChecked = Prefs.clickerUseCps(this)
+        swMode.setOnCheckedChangeListener { _, checked ->
+            Prefs.setClickerUseCps(this, checked)
+            configureClickerSeek()
+        }
+        seekClicker.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                if (Prefs.clickerUseCps(this@MainActivity)) {
+                    Prefs.setClickerCps(this@MainActivity, progress + 1)
+                } else {
+                    Prefs.setClickerIntervalMs(this@MainActivity, 50 + progress * 50)
+                }
+                updateClickerLabel()
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+        configureClickerSeek()
+
+        val seekJitter = findViewById<SeekBar>(R.id.seekJitter)
+        seekJitter.progress = Prefs.clickerJitterPct(this)
+        updateJitterLabel()
+        seekJitter.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                Prefs.setClickerJitterPct(this@MainActivity, progress)
+                updateJitterLabel()
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+
+        val seekLimit = findViewById<SeekBar>(R.id.seekLimit)
+        seekLimit.progress = Prefs.clickerLimitMinutes(this)
+        updateLimitLabel()
+        seekLimit.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                Prefs.setClickerLimitMinutes(this@MainActivity, progress)
+                updateLimitLabel()
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+
         findViewById<Button>(R.id.btnRefreshLog).setOnClickListener { refreshLog() }
         findViewById<Button>(R.id.btnClearLog).setOnClickListener {
             LogStore.clear(this)
@@ -101,6 +160,44 @@ class MainActivity : Activity() {
 
     private fun updateGuardLabel() {
         guardLabel.text = "左上パターンの待ち時間：${Prefs.guardSeconds(this)}秒（広告開始からこの秒数が過ぎるまで左上は押しません）"
+    }
+
+    private fun configureClickerSeek() {
+        if (Prefs.clickerUseCps(this)) {
+            seekClicker.max = 19
+            seekClicker.progress = Prefs.clickerCps(this).coerceIn(1, 20) - 1
+        } else {
+            seekClicker.max = 59
+            seekClicker.progress = ((Prefs.clickerIntervalMs(this) - 50) / 50).coerceIn(0, 59)
+        }
+        updateClickerLabel()
+    }
+
+    private fun updateClickerLabel() {
+        clickerLabel.text = if (Prefs.clickerUseCps(this)) {
+            "連打速度：${Prefs.clickerCps(this)} 回/秒"
+        } else {
+            val ms = Prefs.clickerIntervalMs(this)
+            "連打間隔：$ms ms（約 ${"%.1f".format(1000.0 / ms)} 回/秒）"
+        }
+    }
+
+    private fun updateJitterLabel() {
+        val j = Prefs.clickerJitterPct(this)
+        jitterLabel.text = if (j == 0) {
+            "間隔のゆらぎ：なし（正確に一定間隔）"
+        } else {
+            "間隔のゆらぎ：±$j %（毎回ランダムにずらします）"
+        }
+    }
+
+    private fun updateLimitLabel() {
+        val m = Prefs.clickerLimitMinutes(this)
+        limitLabel.text = if (m == 0) {
+            "自動停止：なし（手動で止めるまで連打）"
+        } else {
+            "自動停止：$m 分たったら自動で止まります"
+        }
     }
 
     private fun isAccessibilityEnabled(): Boolean {

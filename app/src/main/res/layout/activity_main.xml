@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v2.0）"
+            android:text="広告クローザー（試作 v2.1）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -97,6 +97,65 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="近道：直前に使っていたアプリを追加" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="オートクリッカー設定"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="14sp"
+            android:text="マト（連打する場所）はフローティングボタンの「連打の場所指定」から出してドラッグで合わせます。位置は保存されます。連打中はマトがタップを邪魔しないよう自動で素通り状態になります。" />
+
+        <Switch
+            android:id="@+id/swClickerMode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="指定方法：回/秒で指定（オフにすると間隔msで指定）" />
+
+        <TextView
+            android:id="@+id/clickerLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textSize="15sp" />
+
+        <SeekBar
+            android:id="@+id/seekClicker"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+
+        <TextView
+            android:id="@+id/jitterLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textSize="15sp" />
+
+        <SeekBar
+            android:id="@+id/seekJitter"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="50" />
+
+        <TextView
+            android:id="@+id/limitLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textSize="15sp" />
+
+        <SeekBar
+            android:id="@+id/seekLimit"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="60" />
 
         <TextView
             android:id="@+id/guardLabel"

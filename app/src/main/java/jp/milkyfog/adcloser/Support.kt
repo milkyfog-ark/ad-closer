@@ -58,6 +58,31 @@ object Prefs {
     fun setLastForeign(ctx: Context, pkg: String, label: String) =
         sp(ctx).edit().putString("last_foreign_pkg", pkg)
             .putString("last_foreign_label", label).apply()
+
+    // ---- Auto-clicker settings (v2.1) ----
+    /** true = specify the rate in taps per second; false = interval ms. */
+    fun clickerUseCps(ctx: Context): Boolean = sp(ctx).getBoolean("clicker_use_cps", true)
+    fun setClickerUseCps(ctx: Context, v: Boolean) =
+        sp(ctx).edit().putBoolean("clicker_use_cps", v).apply()
+    fun clickerCps(ctx: Context): Int = sp(ctx).getInt("clicker_cps", 5)
+    fun setClickerCps(ctx: Context, v: Int) =
+        sp(ctx).edit().putInt("clicker_cps", v).apply()
+    fun clickerIntervalMs(ctx: Context): Int = sp(ctx).getInt("clicker_interval_ms", 500)
+    fun setClickerIntervalMs(ctx: Context, v: Int) =
+        sp(ctx).edit().putInt("clicker_interval_ms", v).apply()
+    /** Random jitter applied to the interval, in percent (0 = exact). */
+    fun clickerJitterPct(ctx: Context): Int = sp(ctx).getInt("clicker_jitter_pct", 0)
+    fun setClickerJitterPct(ctx: Context, v: Int) =
+        sp(ctx).edit().putInt("clicker_jitter_pct", v).apply()
+    /** Auto-stop after this many minutes; 0 = no limit. */
+    fun clickerLimitMinutes(ctx: Context): Int = sp(ctx).getInt("clicker_limit_min", 0)
+    fun setClickerLimitMinutes(ctx: Context, v: Int) =
+        sp(ctx).edit().putInt("clicker_limit_min", v).apply()
+    /** Target position as screen fractions (the marker's centre). */
+    fun clickerX(ctx: Context): Float = sp(ctx).getFloat("clicker_x", 0.5f)
+    fun clickerY(ctx: Context): Float = sp(ctx).getFloat("clicker_y", 0.5f)
+    fun setClickerPos(ctx: Context, x: Float, y: Float) =
+        sp(ctx).edit().putFloat("clicker_x", x).putFloat("clicker_y", y).apply()
 }
 
 /** In-process commands from the overlay / main screen to the accessibility service. */
@@ -67,6 +92,12 @@ object Control {
 
     /** When true, the current ad session is suspended until the next arm / detection. */
     @Volatile var emergencySuspend: Boolean = false
+
+    /** Auto-clicker run state (v2.1), driven from the floating panel. */
+    @Volatile var clickerOn: Boolean = false
+
+    /** elapsedRealtime when the clicker was started (for the time limit). */
+    @Volatile var clickerStartedAt: Long = 0L
 }
 
 /** Small persistent action log so the user can see what the app did, and report it back. */
