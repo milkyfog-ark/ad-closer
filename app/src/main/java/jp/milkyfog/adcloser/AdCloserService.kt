@@ -544,11 +544,19 @@ class AdCloserService : AccessibilityService() {
             (snap.has("Temu") && snap.has("プライバシーの保護"))
         val temuCard = snap.has("Shop Like a Billionaire") ||
             (snap.has("Temu") && snap.has("開く"))
+        // Pattern H gate screen (v2.4, user report 2026-11-12): a
+        // Temu video-stage screen whose ONLY way forward is the
+        // top-left pill "ストアを開く" — no x anywhere. Tapping it
+        // opens the store / Temu app / landing page, all of which the
+        // existing recovery flows (store sheet, full-store return,
+        // excursion return, landing branch) already handle.
+        val storeGateBounds = snap.boundsOf("ストアを開く")
+        val storeGate = storeGateBounds != null
 
         if (!sessionActive) {
             if (Prefs.resident(this) &&
                 (rewardReady || endCard || closeInCorner || metaCard || welcomeCard ||
-                    temuCreative || temuLanding || temuCard)
+                    temuCreative || temuLanding || temuCard || storeGate)
             ) {
                 startSession(now(), "広告画面を検知")
             }
@@ -682,6 +690,7 @@ class AdCloserService : AccessibilityService() {
         val hKey = when {
             temuCard -> "card"
             temuLanding -> "landing"
+            storeGate -> "storegate"
             temuCreative -> "creative"
             else -> ""
         }
@@ -719,6 +728,24 @@ class AdCloserService : AccessibilityService() {
                         lastHTapAt = now()
                         hTapCount++
                         tap(0.958, 0.041, "パターンH：ランディングページの右上×（Temu）")
+                    }
+                }
+                "storegate" -> {
+                    // The gate pill: pressing it is the only way the
+                    // ad advances (user instruction 2026-11-12). Wait
+                    // for the guard period, or 12s on this screen when
+                    // the session was armed late, so a still-playing
+                    // video is never cut short.
+                    if ((guardPassed || onScreenMs >= 12_000) &&
+                        hTapCount < 2 && now() - lastHTapAt > 6000
+                    ) {
+                        lastHTapAt = now()
+                        hTapCount++
+                        if (storeGateBounds != null) {
+                            tapRect(storeGateBounds, "パターンH：左上の「ストアを開く」")
+                        } else {
+                            tap(0.158, 0.062, "パターンH：左上の「ストアを開く」")
+                        }
                     }
                 }
                 else -> {
