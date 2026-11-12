@@ -126,6 +126,8 @@ class AdCloserService : AccessibilityService() {
     private var currentPkg: String = ""
     private var lastRecordedForeign = ""
     private var lastSpeedTapAt = 0L
+    // When the last session ended in failure (v2.5 excursion watch).
+    private var lastFailedSessionAt = 0L
 
     /** Ad-closing targets: Cell Survivor plus the user's checked apps. */
     private fun isTarget(pkg: String): Boolean =
@@ -293,6 +295,7 @@ class AdCloserService : AccessibilityService() {
 
     private fun startSession(at: Long, why: String) {
         sessionActive = true
+        lastFailedSessionAt = 0L
         if (isTarget(currentPkg)) sessionPkg = currentPkg
         adStartAt = at
         lastATapAt = 0L
@@ -329,6 +332,13 @@ class AdCloserService : AccessibilityService() {
 
     private fun endSession(note: String) {
         if (sessionActive) LogStore.add(this, note)
+        // A session that ended in failure ("…手動で閉じてください")
+        // means an ad is very likely still on screen and the user is
+        // still fighting it. Keep watching for store / advertiser-app
+        // excursions for 60s so a jump to e.g. the Temu app in that
+        // window still gets pulled back (user report 2026-11-12: no
+        // return from the Temu app after the session had given up).
+        if (note.contains("手動")) lastFailedSessionAt = now()
         sessionActive = false
         returningFromStore = false
         returningFromExcursion = false
@@ -455,13 +465,17 @@ class AdCloserService : AccessibilityService() {
                 if (pkg == GAME_PKG) maybeFarmTick()
             }
             pkg == STORE_PKG -> {
-                if (sessionActive && Prefs.storeRecovery(this)) handleStore(snap)
+                val watch = sessionActive ||
+                    (lastFailedSessionAt > 0 && now() - lastFailedSessionAt < 60_000)
+                if (watch && Prefs.storeRecovery(this)) handleStore(snap)
             }
             pkg in RECENTS_PKGS -> {
                 if (returningFromStore) driveReturn(inRecents = true)
             }
             else -> {
-                if (sessionActive) handleExcursion(pkg)
+                val watch = sessionActive ||
+                    (lastFailedSessionAt > 0 && now() - lastFailedSessionAt < 60_000)
+                if (watch) handleExcursion(pkg)
             }
         }
     }
@@ -826,6 +840,12 @@ class AdCloserService : AccessibilityService() {
             if (Prefs.patternB(this)) {
                 val elapsedSec = (now() - adStartAt) / 1000
                 if (elapsedSec >= Prefs.guardSeconds(this)) {
+                    // Corner escalation (extended in v2.5): the user's
+                    // 2026-11-12 log showed an end card where all three
+                    // top-left candidates failed — some cards put the x
+                    // at the top-RIGHT with no reward pill for pattern A
+                    // to key on. Try left x2, then right x2, then retry
+                    // the first left spot before giving up.
                     if (topLeftStage == 0 && now() - lastTopLeftTapAt > 3000) {
                         lastTopLeftTapAt = now()
                         topLeftStage = 1
@@ -834,17 +854,26 @@ class AdCloserService : AccessibilityService() {
                         lastTopLeftTapAt = now()
                         topLeftStage = 2
                         tap(0.058, 0.028, "パターンB：左上の候補2")
-                    } else if (topLeftStage == 2 && now() - lastTopLeftTapAt > 5000) {
-                        // The x that appears after coming back from full-screen
-                        // Play was never confirmed to sit at y=3%: retry the
-                        // y=6% spot once before giving up.
+                    } else if (topLeftStage == 2 && now() - lastTopLeftTapAt > 4000) {
                         lastTopLeftTapAt = now()
                         topLeftStage = 3
+                        tap(0.942, 0.061, "パターンB：右上の候補1")
+                    } else if (topLeftStage == 3 && now() - lastTopLeftTapAt > 4000) {
+                        lastTopLeftTapAt = now()
+                        topLeftStage = 4
+                        tap(0.942, 0.046, "パターンB：右上の候補2")
+                    } else if (topLeftStage == 4 && now() - lastTopLeftTapAt > 5000) {
+                        // The x that appears after coming back from
+                        // full-screen Play was never confirmed to sit at
+                        // y=3%: retry the y=6% spot once before giving up.
+                        lastTopLeftTapAt = now()
+                        topLeftStage = 5
                         tap(0.058, 0.062, "パターンB/C：左上の候補1を再試行")
-                    } else if (topLeftStage == 3 && now() - lastTopLeftTapAt > 8000) {
-                        // None of the candidates closed the ad: stop so the
-                        // app never keeps tapping, and let the user close it.
-                        endSession("左上の×を押せませんでした（手動で閉じてください）")
+                    } else if (topLeftStage == 5 && now() - lastTopLeftTapAt > 8000) {
+                        // None of the candidates closed the ad: stop so
+                        // the app never keeps tapping, and let the user
+                        // close it.
+                        endSession("候補の×を押せませんでした（手動で閉じてください）")
                     }
                 }
             }
