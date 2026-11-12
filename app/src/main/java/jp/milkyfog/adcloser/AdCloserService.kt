@@ -98,6 +98,10 @@ class AdCloserService : AccessibilityService() {
     private var returningFromExcursion = false
     private var excursionAt = 0L
     private var excursionTries = 0
+    // Pattern F state (v1.7): Meta Audience Network end card.
+    private var fTapCount = 0
+    private var lastFTapAt = 0L
+    private var fCardSince = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -139,6 +143,8 @@ class AdCloserService : AccessibilityService() {
         val boundsByText: Map<String, Rect>
     ) {
         fun has(text: String): Boolean = texts.any { it.contains(text) }
+        fun hasRegex(pattern: String): Boolean =
+            texts.any { Regex(pattern).containsMatchIn(it) }
         fun boundsOf(text: String): Rect? =
             boundsByText.entries.firstOrNull { it.key.contains(text) }?.value
     }
@@ -248,6 +254,9 @@ class AdCloserService : AccessibilityService() {
         eTapCount = 0
         lastETapAt = 0L
         returningFromExcursion = false
+        fTapCount = 0
+        lastFTapAt = 0L
+        fCardSince = 0L
         LogStore.add(this, "$why：広告の監視を開始")
     }
 
@@ -362,9 +371,18 @@ class AdCloserService : AccessibilityService() {
         val closeInCorner = closeBounds != null &&
             closeBounds.centerY() < screenH() * 0.12 &&
             closeBounds.centerX() < screenW() * 0.30
+        // Pattern F markers (v1.7): Meta Audience Network shows the
+        // label "Ads served by Meta" throughout, plus a pod counter
+        // ("Ad 1 of 2") during playback. The end card drops the counter
+        // and shows an x at about (92%, 10%) — with none of the texts
+        // patterns A–E key on (user report 2026-11-12: the app sat idle
+        // through all three stages).
+        val metaMarker = snap.has("Ads served by Meta")
+        val metaCounter = snap.hasRegex("Ad \\d+ of \\d+")
+        val metaCard = metaMarker && !metaCounter
 
         if (!sessionActive) {
-            if (Prefs.resident(this) && (rewardReady || endCard || closeInCorner)) {
+            if (Prefs.resident(this) && (rewardReady || endCard || closeInCorner || metaCard)) {
                 startSession(now(), "広告画面を検知")
             }
             return
@@ -420,6 +438,37 @@ class AdCloserService : AccessibilityService() {
                     }
                 }
             }
+            return
+        }
+
+        // Pattern F (v1.7): Meta end card. The corner spot is shared
+        // with the playback timer icon, so the tap waits until the
+        // guard period since the session start has passed — or the
+        // counter-less card has been on screen for 15s (the case where
+        // the session itself only started at the end card).
+        if (metaCard && Prefs.patternB(this)) {
+            noAdSignalSince = 0L
+            if (fCardSince == 0L) fCardSince = now()
+            val guardPassed =
+                (now() - adStartAt) / 1000 >= Prefs.guardSeconds(this)
+            val settled = now() - fCardSince >= 15_000
+            if (guardPassed || settled) {
+                if (fTapCount < 3 && now() - lastFTapAt > 4000) {
+                    lastFTapAt = now()
+                    fTapCount++
+                    tap(0.922, 0.103, "パターンF：右上の×（Meta広告）")
+                } else if (fTapCount >= 3 && now() - lastFTapAt > 8000) {
+                    endSession("パターンF：×を押せませんでした（手動で閉じてください）")
+                }
+            }
+            return
+        }
+
+        if (metaMarker && metaCounter) {
+            // Meta pod still playing ("Ad 1 of 2"): waiting is correct
+            // — keep the session alive and do nothing.
+            noAdSignalSince = 0L
+            fCardSince = 0L
             return
         }
 
