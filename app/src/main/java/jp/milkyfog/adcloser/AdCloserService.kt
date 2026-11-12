@@ -102,6 +102,10 @@ class AdCloserService : AccessibilityService() {
     private var fTapCount = 0
     private var lastFTapAt = 0L
     private var fCardSince = 0L
+    // Pattern F pod-advance state (v1.8).
+    private var fCounterText = ""
+    private var fStageSince = 0L
+    private var fAdvanceTaps = 0
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -145,6 +149,8 @@ class AdCloserService : AccessibilityService() {
         fun has(text: String): Boolean = texts.any { it.contains(text) }
         fun hasRegex(pattern: String): Boolean =
             texts.any { Regex(pattern).containsMatchIn(it) }
+        fun firstRegex(pattern: String): String? =
+            texts.firstOrNull { Regex(pattern).containsMatchIn(it) }
         fun boundsOf(text: String): Rect? =
             boundsByText.entries.firstOrNull { it.key.contains(text) }?.value
     }
@@ -257,6 +263,9 @@ class AdCloserService : AccessibilityService() {
         fTapCount = 0
         lastFTapAt = 0L
         fCardSince = 0L
+        fCounterText = ""
+        fStageSince = 0L
+        fAdvanceTaps = 0
         LogStore.add(this, "$why：広告の監視を開始")
     }
 
@@ -464,11 +473,32 @@ class AdCloserService : AccessibilityService() {
             return
         }
 
-        if (metaMarker && metaCounter) {
-            // Meta pod still playing ("Ad 1 of 2"): waiting is correct
-            // — keep the session alive and do nothing.
+        if (metaMarker && metaCounter && Prefs.patternB(this)) {
+            // Meta pod stage ("Ad 1 of 2"): once this ad ends, the
+            // corner control becomes a "next" button and the pod does
+            // NOT advance until it is tapped (user correction
+            // 2026-11-12 — v1.7 wrongly read the icon as a passive
+            // timer and waited forever). Tap the corner periodically
+            // while the counter shows: during real playback the icon
+            // is not a button yet, so early taps are no-ops, and the
+            // first tap after the ad ends moves the pod on. The big
+            // body CTA is never touched.
             noAdSignalSince = 0L
             fCardSince = 0L
+            val counterText = snap.firstRegex("Ad \\d+ of \\d+") ?: ""
+            if (counterText != fCounterText) {
+                fCounterText = counterText
+                fStageSince = now()
+                fAdvanceTaps = 0
+            }
+            if (now() - fStageSince >= 12_000 && fAdvanceTaps < 5 &&
+                now() - lastFTapAt > 8_000
+            ) {
+                lastFTapAt = now()
+                fAdvanceTaps++
+                fStageSince = now()
+                tap(0.922, 0.103, "パターンF：次の広告へ（右上）")
+            }
             return
         }
 
