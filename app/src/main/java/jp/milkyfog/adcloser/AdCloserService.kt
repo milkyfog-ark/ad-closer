@@ -80,6 +80,10 @@ class AdCloserService : AccessibilityService() {
     private var lastAnyTapAt = 0L
     private var sweepCount = 0
     private var lastSweepAt = 0L
+    // Pattern I state (v2.10): top-right スキップ pill.
+    private var skipSince = 0L
+    private var lastSkipTapAt = 0L
+    private var skipTapCount = 0
     private var lastTopLeftTapAt = 0L
     private var topLeftStage = 0 // 0 = none, 1 = tried y=6%, 2 = tried y=3%, 3 = retried y=6%
     private var storeCloseCount = 0
@@ -379,6 +383,9 @@ class AdCloserService : AccessibilityService() {
         lastAnyTapAt = 0L
         sweepCount = 0
         lastSweepAt = 0L
+        skipSince = 0L
+        lastSkipTapAt = 0L
+        skipTapCount = 0
         LogStore.add(this, "$why：広告の監視を開始")
     }
 
@@ -594,7 +601,19 @@ class AdCloserService : AccessibilityService() {
         // text was registered.
         val rewardReady = snap.has("報酬を獲得しました") || snap.has("Reward granted")
         val endCard = snap.has("インストール") || snap.has("Google Play") ||
-            snap.has("Install")
+            snap.has("Install") || snap.has("ダウンロード")
+        // Pattern I (v2.10, user report 2026-11-12): an end card whose
+        // working exit is the 「スキップ」 pill at the TOP-RIGHT (the
+        // Gemini ad in the report; its bottom 「閉じる」/ダウンロード
+        // buttons are not the exit — the user instructed that the
+        // top-right skip is what must be pressed). Recognised by the
+        // pill's actual bounds in the top-right area, so the game's
+        // own スキップ checkbox (mid-screen, on the roulette panel)
+        // never matches.
+        val skipBounds = snap.boundsOf("スキップ")
+        val skipInCorner = skipBounds != null &&
+            skipBounds.centerX() > screenW() * 0.60 &&
+            skipBounds.centerY() < screenH() * 0.15
         // Pattern D (found 2026-11-11): an end card whose only close
         // affordance is a labelled pill button "閉じる" at the top-left
         // (about (10%, 6%)), with no reward text and no install text, so
@@ -656,7 +675,7 @@ class AdCloserService : AccessibilityService() {
         if (!sessionActive) {
             if (Prefs.resident(this) &&
                 (rewardReady || endCard || closeInCorner || metaCard || welcomeCard ||
-                    temuCreative || temuLanding || temuCard || storeGate)
+                    temuCreative || temuLanding || temuCard || storeGate || skipInCorner)
             ) {
                 startSession(now(), "広告画面を検知")
             }
@@ -885,6 +904,26 @@ class AdCloserService : AccessibilityService() {
                 } else if (gTapCount >= 3 && now() - lastGTapAt > 8000) {
                     endSession("パターンG：右上の×を押せませんでした（手動で閉じてください）")
                 }
+            }
+            return
+        }
+
+        // Pattern I: tap the top-right 「スキップ」 pill itself.
+        // Same patience as G/D: the guard period, or the pill present
+        // continuously for 8s (a late-armed session), before tapping.
+        if (!skipInCorner) skipSince = 0L
+        if (skipInCorner && Prefs.patternB(this)) {
+            noAdSignalSince = 0L
+            if (skipSince == 0L) skipSince = now()
+            val skipReady =
+                (now() - adStartAt) / 1000 >= Prefs.guardSeconds(this) ||
+                    now() - skipSince >= 8_000
+            if (skipReady && skipTapCount < 3 && now() - lastSkipTapAt > 4000) {
+                lastSkipTapAt = now()
+                skipTapCount++
+                tapRect(skipBounds!!, "パターンI：右上の「スキップ」")
+            } else if (skipTapCount >= 3 && now() - lastSkipTapAt > 8000) {
+                endSession("パターンI：「スキップ」を押せませんでした（手動で閉じてください）")
             }
             return
         }
