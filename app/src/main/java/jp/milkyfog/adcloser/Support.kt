@@ -121,7 +121,7 @@ object Control {
 /** Small persistent action log so the user can see what the app did, and report it back. */
 object LogStore {
     private const val KEY = "log_lines"
-    private const val MAX = 80
+    private const val MAX = 300
     private fun sp(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences("log", Context.MODE_PRIVATE)
 

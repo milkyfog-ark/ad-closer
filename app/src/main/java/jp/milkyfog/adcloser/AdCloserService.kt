@@ -70,6 +70,16 @@ class AdCloserService : AccessibilityService() {
     private var aTapCount = 0
     private var lastCloseTapAt = 0L
     private var closeTapCount = 0
+    // v2.8: pattern D fires only after the guard period (or 8s of the
+    // label being continuously present) — the user's 2026-11-12 log
+    // showed it tapping in the very second the session started, on a
+    // label that then vanished, after which the session wrongly
+    // concluded the ad had closed. lastAnyTapAt feeds the last-resort
+    // finisher; sweep* is its state.
+    private var dLabelSince = 0L
+    private var lastAnyTapAt = 0L
+    private var sweepCount = 0
+    private var lastSweepAt = 0L
     private var lastTopLeftTapAt = 0L
     private var topLeftStage = 0 // 0 = none, 1 = tried y=6%, 2 = tried y=3%, 3 = retried y=6%
     private var storeCloseCount = 0
@@ -284,6 +294,7 @@ class AdCloserService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, 70))
             .build()
         gestureGuardUntil = now() + 300
+        lastAnyTapAt = now()
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
     }
@@ -307,6 +318,7 @@ class AdCloserService : AccessibilityService() {
             .addStroke(stroke(400))
             .build()
         gestureGuardUntil = now() + 900
+        lastAnyTapAt = now()
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
     }
@@ -322,6 +334,7 @@ class AdCloserService : AccessibilityService() {
             .addStroke(GestureDescription.StrokeDescription(path, 0, 70))
             .build()
         gestureGuardUntil = now() + 300
+        lastAnyTapAt = now()
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why をタップ")
     }
@@ -360,6 +373,10 @@ class AdCloserService : AccessibilityService() {
         hSince = 0L
         hTapCount = 0
         lastHTapAt = 0L
+        dLabelSince = 0L
+        lastAnyTapAt = 0L
+        sweepCount = 0
+        lastSweepAt = 0L
         LogStore.add(this, "$why：広告の監視を開始")
     }
 
@@ -861,9 +878,18 @@ class AdCloserService : AccessibilityService() {
             return
         }
 
+        if (!closeInCorner) dLabelSince = 0L
         if (closeInCorner && Prefs.patternB(this)) {
             noAdSignalSince = 0L
-            if (closeTapCount < 3 && now() - lastCloseTapAt > 3500) {
+            if (dLabelSince == 0L) dLabelSince = now()
+            // A corner close label visible in the first seconds of an
+            // ad is often still inactive or a decoy that disappears
+            // (the user's lucky-wheel ad, 2026-11-12): wait for the
+            // guard period, or for the label to have been present
+            // continuously for 8s, before spending a tap on it.
+            val dReady = (now() - adStartAt) / 1000 >= Prefs.guardSeconds(this) ||
+                now() - dLabelSince >= 8_000
+            if (dReady && closeTapCount < 3 && now() - lastCloseTapAt > 3500) {
                 lastCloseTapAt = now()
                 closeTapCount++
                 tapRect(closeBounds!!, "パターンD：「閉じる」ボタン")
@@ -939,6 +965,33 @@ class AdCloserService : AccessibilityService() {
                 }
             }
             return
+        }
+
+        // Playable ads with almost no text hooks (the user's
+        // 2026-11-12 lucky-wheel ad: a wheel, an orange "Go" button,
+        // a top-right x, an Ad badge) expose a lone "Go" — enough to
+        // keep the session alive, never a tap target.
+        if (snap.has("Go")) noAdSignalSince = 0L
+
+        // Last-resort finisher (v2.8): a session still alive after
+        // 50s with no branch having tapped for 10s is an ad none of
+        // the patterns recognised (a long session cannot be plain
+        // gameplay — signal-less sessions die in 4s). Sweep the known
+        // top-right x positions. Never while a progress meter reads
+        // mid-range: an early corner tap can open the store (the
+        // pattern-F lesson).
+        val meterMid = snap.maxProgress > 0.0 && snap.maxProgress < 0.99
+        if (!meterMid && now() - adStartAt >= 50_000 && now() - lastAnyTapAt > 10_000) {
+            if (sweepCount < 3 && now() - lastSweepAt > 6000) {
+                lastSweepAt = now()
+                val pts = arrayOf(0.927 to 0.064, 0.898 to 0.064, 0.942 to 0.061)
+                val p = pts[sweepCount]
+                sweepCount++
+                tap(p.first, p.second, "最終手段：右上の×候補$sweepCount")
+            } else if (sweepCount >= 3 && now() - lastSweepAt > 8000) {
+                endSession("最終手段の×でも閉じられませんでした（手動で閉じてください）")
+                return
+            }
         }
 
         // In the game with no ad signals: the ad is over.
@@ -1035,6 +1088,18 @@ class AdCloserService : AccessibilityService() {
     // with error codes, and the sampled colour fractions.
     private var farmDiagGateAt = 0L
     private var farmDiagAt = 0L
+
+    // Diagnostics repeat the same values for minutes while farming
+    // idles; identical repeats flooded the 80-line log and wiped the
+    // ad-handling evidence the user needed to send (2026-11-12).
+    // Route diag lines through a dedupe: only changes are recorded.
+    private var lastDiagText = ""
+
+    private fun diagLog(text: String) {
+        if (text == lastDiagText) return
+        lastDiagText = text
+        LogStore.add(this, text)
+    }
     private var farmShotLogged = false
     private var farmExCount = 0
 
@@ -1043,10 +1108,7 @@ class AdCloserService : AccessibilityService() {
         val tg = now()
         if (tg - farmDiagGateAt > 10_000) {
             farmDiagGateAt = tg
-            LogStore.add(
-                this,
-                "周回診断：gate session=$sessionActive busy=$farmBusy sdk=${Build.VERSION.SDK_INT}"
-            )
+            diagLog("周回診断：gate session=$sessionActive busy=$farmBusy sdk=${Build.VERSION.SDK_INT}")
         }
         if (sessionActive || farmBusy) return
         if (Build.VERSION.SDK_INT < 31) return // wrapHardwareBuffer needs API 31
@@ -1303,10 +1365,7 @@ class AdCloserService : AccessibilityService() {
                 val cs = doubleArrayOf(0.172, 0.495, 0.825)
                 IntArray(3) { cardRank(bmp, cs[it]) }.joinToString(",")
             } else "-"
-            LogStore.add(
-                this,
-                "周回診断：banner=${"%.2f".format(banner)} ref=${"%.2f".format(ref)} ranks=[$rk]"
-            )
+            diagLog("周回診断：banner=${"%.2f".format(banner)} ref=${"%.2f".format(ref)} ranks=[$rk]")
             // (v1.1 decides between the 3-card and 2-card layouts by
             // colour share; see the banner branch below.)
         }
