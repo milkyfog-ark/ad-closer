@@ -144,7 +144,11 @@ class AdCloserService : AccessibilityService() {
 
     private class Snap(
         val texts: List<String>,
-        val boundsByText: Map<String, Rect>
+        val boundsByText: Map<String, Rect>,
+        // Highest progress ratio (0..1) among nodes exposing range
+        // info (e.g. a native progress bar); -1 when none is exposed.
+        // Added in v1.9 to read the Meta ad meter.
+        val maxProgress: Float
     ) {
         fun has(text: String): Boolean = texts.any { it.contains(text) }
         fun hasRegex(pattern: String): Boolean =
@@ -159,6 +163,7 @@ class AdCloserService : AccessibilityService() {
         val texts = ArrayList<String>()
         val bounds = HashMap<String, Rect>()
         var budget = 500
+        var maxProgress = -1f
         fun walk(node: AccessibilityNodeInfo?) {
             if (node == null || budget <= 0) return
             budget--
@@ -177,10 +182,15 @@ class AdCloserService : AccessibilityService() {
                     bounds[label] = r
                 }
             }
+            val ri = node.rangeInfo
+            if (ri != null && ri.max > ri.min) {
+                val ratio = (ri.current - ri.min) / (ri.max - ri.min)
+                if (ratio > maxProgress) maxProgress = ratio
+            }
             for (i in 0 until node.childCount) walk(node.getChild(i))
         }
         walk(root)
-        return Snap(texts, bounds)
+        return Snap(texts, bounds, maxProgress)
     }
 
     // ---------------- helpers ----------------
@@ -450,6 +460,20 @@ class AdCloserService : AccessibilityService() {
             return
         }
 
+        if (metaMarker && !metaCounter &&
+            snap.maxProgress >= 0f && snap.maxProgress < 0.99f
+        ) {
+            // The counter is not visible but a progress meter is still
+            // running: mid-playback (a flickery tree), NOT the end
+            // card. Tapping the corner now would open Google Play
+            // (user correction 2026-11-12), so just keep waiting. If
+            // this state persists implausibly long, fall through and
+            // treat it as the end card.
+            noAdSignalSince = 0L
+            if (fCardSince == 0L) fCardSince = now()
+            if (now() - fCardSince < 20_000) return
+        }
+
         // Pattern F (v1.7): Meta end card. The corner spot is shared
         // with the playback timer icon, so the tap waits until the
         // guard period since the session start has passed — or the
@@ -474,15 +498,14 @@ class AdCloserService : AccessibilityService() {
         }
 
         if (metaMarker && metaCounter && Prefs.patternB(this)) {
-            // Meta pod stage ("Ad 1 of 2"): once this ad ends, the
-            // corner control becomes a "next" button and the pod does
-            // NOT advance until it is tapped (user correction
-            // 2026-11-12 — v1.7 wrongly read the icon as a passive
-            // timer and waited forever). Tap the corner periodically
-            // while the counter shows: during real playback the icon
-            // is not a button yet, so early taps are no-ops, and the
-            // first tap after the ad ends moves the pod on. The big
-            // body CTA is never touched.
+            // Meta pod stage ("Ad 1 of 2"). The corner becomes the
+            // "next" button ONLY after the bottom progress meter has
+            // run to the end; tapping it earlier opens Google Play
+            // (user corrections 2026-11-12 — v1.7 waited forever, and
+            // v1.8's periodic taps would have been actively harmful).
+            // The meter is a native progress bar whose range info the
+            // snapshot reads, so tap only when it reports complete.
+            // Fallback when no meter node is exposed at all: 40s/ad.
             noAdSignalSince = 0L
             fCardSince = 0L
             val counterText = snap.firstRegex("Ad \\d+ of \\d+") ?: ""
@@ -491,8 +514,11 @@ class AdCloserService : AccessibilityService() {
                 fStageSince = now()
                 fAdvanceTaps = 0
             }
-            if (now() - fStageSince >= 12_000 && fAdvanceTaps < 5 &&
-                now() - lastFTapAt > 8_000
+            val meterDone = snap.maxProgress >= 0.99f
+            val noMeterFallback = snap.maxProgress < 0f &&
+                now() - fStageSince >= 40_000
+            if ((meterDone || noMeterFallback) && fAdvanceTaps < 3 &&
+                now() - lastFTapAt > 5_000
             ) {
                 lastFTapAt = now()
                 fAdvanceTaps++
