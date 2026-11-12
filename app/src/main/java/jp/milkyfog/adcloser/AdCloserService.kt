@@ -203,6 +203,8 @@ class AdCloserService : AccessibilityService() {
         val maxProgress: Float
     ) {
         fun has(text: String): Boolean = texts.any { it.contains(text) }
+        /** Whole-label match: "開く" must not match "ストアを開く". */
+        fun hasExact(text: String): Boolean = texts.any { it.trim() == text }
         fun hasRegex(pattern: String): Boolean =
             texts.any { Regex(pattern).containsMatchIn(it) }
         fun firstRegex(pattern: String): String? =
@@ -634,8 +636,14 @@ class AdCloserService : AccessibilityService() {
         val temuCreative = !rewardReady && snap.has("Main Product")
         val temuLanding = snap.has("Temuを選ぶ理由") ||
             (snap.has("Temu") && snap.has("プライバシーの保護"))
+        // v2.9: the card's 開く test must be a whole-label match.
+        // With a substring test, the storegate screen matched here —
+        // its pill 「ストアを開く」 contains 開く and the video tree
+        // carries a "Temu" node — and the app tapped a non-existent
+        // top-right x on the video instead of the pill (user log
+        // 2026-11-12 18:46).
         val temuCard = snap.has("Shop Like a Billionaire") ||
-            (snap.has("Temu") && snap.has("開く"))
+            (snap.has("Temu") && snap.hasExact("開く"))
         // Pattern H gate screen (v2.4, user report 2026-11-12): a
         // Temu video-stage screen whose ONLY way forward is the
         // top-left pill "ストアを開く" — no x anywhere. Tapping it
@@ -779,10 +787,13 @@ class AdCloserService : AccessibilityService() {
         // Pattern H (v2.3): walk the Temu funnel screen by screen.
         // Each screen counts as an ad signal so the session survives
         // the whole funnel (v2.2's session died at the first screen).
+        // The storegate pill is an exact, unambiguous element: while
+        // it is on screen the gate flow is correct by definition, so
+        // it outranks every looser text marker (v2.9).
         val hKey = when {
+            storeGate -> "storegate"
             temuCard -> "card"
             temuLanding -> "landing"
-            storeGate -> "storegate"
             temuCreative -> "creative"
             else -> ""
         }
