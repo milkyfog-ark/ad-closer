@@ -105,6 +105,13 @@ class AdCloserService : AccessibilityService() {
     private var gTapCount = 0
     private var lastGTapAt = 0L
     private var gCardSince = 0L
+    // Pattern H state (v2.3): Temu funnel card. hScreenKey identifies
+    // which funnel screen is up ("creative" / "landing" / "card");
+    // hSince / hTapCount are per-screen.
+    private var hScreenKey = ""
+    private var hSince = 0L
+    private var hTapCount = 0
+    private var lastHTapAt = 0L
     private var lastFTapAt = 0L
     private var fCardSince = 0L
     // Pattern F pod-advance state (v1.8).
@@ -313,6 +320,10 @@ class AdCloserService : AccessibilityService() {
         gTapCount = 0
         lastGTapAt = 0L
         gCardSince = 0L
+        hScreenKey = ""
+        hSince = 0L
+        hTapCount = 0
+        lastHTapAt = 0L
         LogStore.add(this, "$why：広告の監視を開始")
     }
 
@@ -438,7 +449,7 @@ class AdCloserService : AccessibilityService() {
                         eStage = 2
                         lastETapAt = 0L
                     }
-                    LogStore.add(this, "パターンE：広告主アプリから対象アプリに戻りました")
+                    LogStore.add(this, "広告主アプリから対象アプリに戻りました")
                 }
                 handleGame(snap)
                 if (pkg == GAME_PKG) maybeFarmTick()
@@ -468,7 +479,7 @@ class AdCloserService : AccessibilityService() {
             returningFromExcursion = true
             excursionAt = now()
             excursionTries = 0
-            LogStore.add(this, "パターンE：別アプリ（$pkg）に移りました。対象アプリに戻します")
+            LogStore.add(this, "別アプリ（$pkg）に移りました。対象アプリに戻します")
             return
         }
         val waited = now() - excursionAt
@@ -478,7 +489,7 @@ class AdCloserService : AccessibilityService() {
             launchAppIntent()
         } else if (excursionTries >= 3 && waited > 3000) {
             returningFromExcursion = false
-            LogStore.add(this, "パターンE：自動で対象アプリに戻れませんでした。手動で元のアプリに戻ってください")
+            LogStore.add(this, "自動で対象アプリに戻れませんでした。手動で元のアプリに戻ってください")
         }
     }
 
@@ -520,10 +531,24 @@ class AdCloserService : AccessibilityService() {
         val welcomeCard = !rewardReady &&
             (snap.has("ウェルカムボーナス") || snap.has("豪華報酬") ||
                 (snap.has("獲得") && closeBounds != null && !closeInCorner))
+        // Pattern H markers (v2.3, user walkthrough 2026-11-12): a
+        // Temu funnel. The creative's x (about (93%, 6%)) does NOT
+        // close the ad — it opens Temu's landing page inside the ad;
+        // that page's own x (about (96%, 4%)) launches the Temu app;
+        // after returning to the game, the black end card is waiting
+        // and ITS x finally ends the ad. v2.2 matched none of the
+        // three screens, the session timed out after 4s of "no
+        // signal", and even the excursion return never engaged.
+        val temuCreative = !rewardReady && snap.has("Main Product")
+        val temuLanding = snap.has("Temuを選ぶ理由") ||
+            (snap.has("Temu") && snap.has("プライバシーの保護"))
+        val temuCard = snap.has("Shop Like a Billionaire") ||
+            (snap.has("Temu") && snap.has("開く"))
 
         if (!sessionActive) {
             if (Prefs.resident(this) &&
-                (rewardReady || endCard || closeInCorner || metaCard || welcomeCard)
+                (rewardReady || endCard || closeInCorner || metaCard || welcomeCard ||
+                    temuCreative || temuLanding || temuCard)
             ) {
                 startSession(now(), "広告画面を検知")
             }
@@ -647,6 +672,65 @@ class AdCloserService : AccessibilityService() {
                 fAdvanceTaps++
                 fStageSince = now()
                 tap(0.922, 0.103, "パターンF：次の広告へ（右上）")
+            }
+            return
+        }
+
+        // Pattern H (v2.3): walk the Temu funnel screen by screen.
+        // Each screen counts as an ad signal so the session survives
+        // the whole funnel (v2.2's session died at the first screen).
+        val hKey = when {
+            temuCard -> "card"
+            temuLanding -> "landing"
+            temuCreative -> "creative"
+            else -> ""
+        }
+        if (hKey.isNotEmpty() && Prefs.patternB(this)) {
+            noAdSignalSince = 0L
+            if (hKey != hScreenKey) {
+                hScreenKey = hKey
+                hSince = now()
+                hTapCount = 0
+                lastHTapAt = 0L
+            }
+            val onScreenMs = now() - hSince
+            val guardPassed =
+                (now() - adStartAt) / 1000 >= Prefs.guardSeconds(this)
+            when (hKey) {
+                "card" -> {
+                    // The final card: its x really closes the ad.
+                    if ((guardPassed || onScreenMs >= 8_000) &&
+                        hTapCount < 3 && now() - lastHTapAt > 4000
+                    ) {
+                        lastHTapAt = now()
+                        hTapCount++
+                        tap(0.927, 0.064, "パターンH：最終カードの右上×（Temu）")
+                    } else if (hTapCount >= 3 && now() - lastHTapAt > 8000) {
+                        endSession("パターンH：最終カードの×を押せませんでした（手動で閉じてください）")
+                    }
+                }
+                "landing" -> {
+                    // The landing page's x launches the Temu app; the
+                    // generic excursion return then brings the session
+                    // app back to the final card.
+                    if (onScreenMs >= 2_500 && hTapCount < 2 &&
+                        now() - lastHTapAt > 4000
+                    ) {
+                        lastHTapAt = now()
+                        hTapCount++
+                        tap(0.958, 0.041, "パターンH：ランディングページの右上×（Temu）")
+                    }
+                }
+                else -> {
+                    // "creative": its x opens the landing page.
+                    if ((guardPassed || onScreenMs >= 10_000) &&
+                        hTapCount < 2 && now() - lastHTapAt > 4000
+                    ) {
+                        lastHTapAt = now()
+                        hTapCount++
+                        tap(0.927, 0.064, "パターンH：広告の右上×（Temu・ランディングへ）")
+                    }
+                }
             }
             return
         }
