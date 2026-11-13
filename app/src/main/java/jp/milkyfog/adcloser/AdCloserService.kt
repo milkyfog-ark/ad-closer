@@ -1414,10 +1414,31 @@ class AdCloserService : AccessibilityService() {
     // for everything else, and 全停止 remains the real brake.
     private var farmFingerprint = ""
     private var farmSuppressed = ""
+    // v2.14: slow retries after suppression. The roulette panel
+    // stalled again in the user's 2026-11-13 log: three properly
+    // formed double taps at the 確認 button (17:08:53–17:09:02,
+    // no cancellations, panel not covering) did not advance it,
+    // and the v1.4 sleep then parked the screen forever. These
+    // panels appear to become responsive later than their buttons
+    // render (reel / ejection animation), so giving up after ~10s
+    // is too early: while the same screen persists, retry once
+    // every 15s, up to 4 more times, before sleeping for real.
+    private var farmSlowAt = 0L
+    private var farmSlowLeft = 0
+    private var rouTapIdx = 0
 
     private fun farmAct(sig: String, fingerprint: String, action: () -> Unit) {
-        if (fingerprint == farmSuppressed) return
         val t = now()
+        if (fingerprint == farmSuppressed) {
+            if (farmSlowLeft > 0 && t - farmSlowAt >= 15_000) {
+                farmSlowAt = t
+                farmSlowLeft--
+                LogStore.add(this, "周回：$sig はまだ同じ画面のため、ゆっくり再試行します（残り $farmSlowLeft 回）")
+                action()
+                farmCooldownUntil = t + 4500
+            }
+            return
+        }
         if (fingerprint == farmFingerprint && t - farmSigWindowStart < 60_000) {
             farmSigCount++
         } else {
@@ -1428,7 +1449,9 @@ class AdCloserService : AccessibilityService() {
         }
         if (farmSigCount > 3) {
             farmSuppressed = fingerprint
-            LogStore.add(this, "周回：この画面（$sig）は自動で進められなかったため、画面が変わるまでお休みします")
+            farmSlowAt = t
+            farmSlowLeft = 4
+            LogStore.add(this, "周回：この画面（$sig）は自動で進められなかったため、間隔を空けて再試行します")
             return
         }
         action()
@@ -1582,7 +1605,17 @@ class AdCloserService : AccessibilityService() {
             // advances this panel is the 確認 button below it. The
             // skip-tap loop plus clicker-caused gesture cancellations
             // stalled farming on this panel.
-            farmAct("ルーレット", "rou") { tapButton(0.717, 0.623, "周回：ルーレットの確認") }
+            farmAct("ルーレット", "rou") {
+                // Cycle the tap point across attempts (same idea as
+                // the victory screen): if one spot on the button is
+                // somehow dead, the next try lands elsewhere on it.
+                val pts = arrayOf(
+                    0.717 to 0.623, 0.69 to 0.610, 0.745 to 0.632
+                )
+                val p = pts[rouTapIdx % pts.size]
+                rouTapIdx++
+                tapButton(p.first, p.second, "周回：ルーレットの確認")
+            }
             return
         }
 
@@ -1648,6 +1681,7 @@ class AdCloserService : AccessibilityService() {
         farmFingerprint = ""
         farmSigCount = 0
         farmSuppressed = ""
+        farmSlowLeft = 0
     }
 
     private fun driveReturn(inRecents: Boolean) {
