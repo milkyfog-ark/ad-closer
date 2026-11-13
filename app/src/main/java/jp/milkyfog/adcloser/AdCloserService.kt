@@ -1361,7 +1361,7 @@ class AdCloserService : AccessibilityService() {
         // point, and waiting 50s just leaves the ad on screen.
         val finisherStart = if (!sessionTapped || funnelSeen) 15_000 else 50_000
         if (!meterMid && !bareCanvas && now() - adStartAt >= finisherStart && now() - lastAnyTapAt > 10_000) {
-            if (sweepCount < 5 && now() - lastSweepAt > sweepGapMs) {
+            if (sweepCount < 6 && now() - lastSweepAt > sweepGapMs) {
                 lastSweepAt = now()
                 finisherActive = true
                 // v2.21: the storegate pill position is a candidate:
@@ -1377,19 +1377,27 @@ class AdCloserService : AccessibilityService() {
                 // pill is visible; if the reveal tap itself counts
                 // as the video's click-through, the store flows
                 // handle whatever opens.
+                // v2.28: candidate 2 is the Meta pod corner
+                // (92.2%, 10.3%). A pod whose texts are ALL hidden
+                // (the 2026-11-14 01:19 Ad 2 of 2: no counter, no
+                // marker, no install text) reaches ONLY this
+                // sweep — the corner escalation never runs without
+                // an end-card text — and up to v2.27 the sweep
+                // never tried that corner at all.
                 val pts = arrayOf(
-                    0.927 to 0.064, 0.50 to 0.45, 0.158 to 0.062,
-                    0.898 to 0.064, 0.942 to 0.061
+                    0.927 to 0.064, 0.922 to 0.103, 0.50 to 0.45,
+                    0.158 to 0.062, 0.898 to 0.064, 0.942 to 0.061
                 )
                 val p = pts[sweepCount]
                 sweepCount++
-                sweepGapMs = if (sweepCount == 2) 1_200 else 6_000
+                sweepGapMs = if (sweepCount == 3) 1_200 else 6_000
                 when (sweepCount) {
-                    2 -> tap(p.first, p.second, "最終手段：画面をタップ（ボタンを表示）")
-                    3 -> tap(p.first, p.second, "最終手段：左上の「ストアを開く」候補")
+                    2 -> tap(p.first, p.second, "最終手段：右上の×候補（Meta位置）")
+                    3 -> tap(p.first, p.second, "最終手段：画面をタップ（ボタンを表示）")
+                    4 -> tap(p.first, p.second, "最終手段：左上の「ストアを開く」候補")
                     else -> tap(p.first, p.second, "最終手段：右上の×候補$sweepCount")
                 }
-            } else if (sweepCount >= 5 && now() - lastSweepAt > 8000) {
+            } else if (sweepCount >= 6 && now() - lastSweepAt > 8000) {
                 endSession("最終手段の×でも閉じられませんでした（手動で閉じてください）")
                 return
             }
