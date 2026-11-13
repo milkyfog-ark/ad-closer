@@ -139,6 +139,12 @@ class AdCloserService : AccessibilityService() {
     private var returnStep = 0
     private var returnStepAt = 0L
     private var returnBlocked = false
+    // v2.24: true while a driveReturn Recents fallback is in
+    // flight, so its success can be booked against the budget.
+    private var recentsArmed = false
+    // v2.24: pattern-C pill taps by real bounds (see handleGame).
+    private var cPillTaps = 0
+    private var lastCPillTapAt = 0L
     private var lastEventClass = ""
     // Pattern E state (v1.5, from the user's TikTok-card screenshots on
     // 2026-11-12): an end card whose only corner control is first a ">>"
@@ -439,6 +445,9 @@ class AdCloserService : AccessibilityService() {
         returningFromStore = false
         returnStep = 0
         returnBlocked = false
+        recentsArmed = false
+        cPillTaps = 0
+        lastCPillTapAt = 0L
         eStage = 0
         eTapCount = 0
         lastETapAt = 0L
@@ -634,7 +643,17 @@ class AdCloserService : AccessibilityService() {
                     // We made it back to the target app from the store.
                     returningFromStore = false
                     storeExcursions++
-                    topLeftStage = 0
+                    // v2.24: book a Recents-fallback return against
+                    // the return budget like any other return. And
+                    // do NOT reset topLeftStage here: resetting it
+                    // restarted the corner escalation from its
+                    // first candidate after every store visit,
+                    // which (with the ungated Recents return) looped
+                    // store<->game ~25 times on 2026-11-14.
+                    if (recentsArmed) {
+                        recentsArmed = false
+                        bookReturn()
+                    }
                     noAdSignalSince = 0L
                     if (eStage == 1) eStage = 2
                     LogStore.add(this, "対象アプリに戻りました。×の出現を待ちます")
@@ -1182,6 +1201,38 @@ class AdCloserService : AccessibilityService() {
             if (Prefs.patternB(this)) {
                 val elapsedSec = (now() - adStartAt) / 1000
                 if (elapsedSec >= Prefs.guardSeconds(this)) {
+                    // Pattern C proper (v2.24): if a "Google Play"
+                    // pill is on screen in the top-left, press the
+                    // pill ITSELF — the centre of its real bounds —
+                    // not the fixed corner point. The fixed point
+                    // (5.8%, 6.2%) sits on the pill's left edge/icon
+                    // and did not register as a press on the
+                    // FREECASH video (user correction 2026-11-14:
+                    // had the pill actually been pressed, the flow
+                    // would have finished in one round; it was not
+                    // pressed). One proper press opens the store;
+                    // after the return, the x appears and the other
+                    // branches (or the escalation below, whose stage
+                    // store returns no longer reset) finish the ad.
+                    // Capped at 2 presses per session.
+                    val dm = resources.displayMetrics
+                    val pill = snap.boundsByText.entries
+                        .filter { it.key.contains("Google Play") }
+                        .map { it.value }
+                        .firstOrNull { r ->
+                            r.centerX() < dm.widthPixels * 0.35 &&
+                                r.centerY() < dm.heightPixels * 0.12 &&
+                                r.width() < dm.widthPixels * 0.5 &&
+                                r.height() < dm.heightPixels * 0.10
+                        }
+                    if (pill != null && cPillTaps < 2 &&
+                        now() - lastCPillTapAt > 6_000
+                    ) {
+                        lastCPillTapAt = now()
+                        cPillTaps++
+                        tapRect(pill, "パターンC：左上の「Google Play」をタップ")
+                        return
+                    }
                     // Corner escalation (extended in v2.5): the user's
                     // 2026-11-12 log showed an end card where all three
                     // top-left candidates failed — some cards put the x
@@ -1359,6 +1410,14 @@ class AdCloserService : AccessibilityService() {
                 driveReturn(inRecents = false)
                 return
             }
+            if (!returnBudgetOk()) {
+                // v2.24: no return budget (breaker suspended, cap
+                // reached, or too soon after the last return): do
+                // not start a return episode at all.
+                returnBlocked = true
+                LogStore.add(this, "自動復帰が停止中のため、ストアからの復帰を行いません")
+                return
+            }
             returningFromStore = true
             returnStep = 0
             returnStepAt = now()
@@ -1418,7 +1477,12 @@ class AdCloserService : AccessibilityService() {
         }
     }
 
-    private fun returnToApp(): Boolean {
+    // v2.24: ONE budget for every return mechanism. The Recents
+    // fallback in driveReturn used to bypass the breaker, the
+    // per-session cap and the 15s gap entirely, which produced
+    // the 2026-11-14 pattern-C loop (store -> Recents return ->
+    // stage reset -> corner tap -> store, ~25 cycles).
+    private fun returnBudgetOk(checkGap: Boolean = true): Boolean {
         if (!returnGateOpen()) return false
         if (sessionActive && sessionReturns >= 2) {
             if (!capLogged) {
@@ -1427,13 +1491,20 @@ class AdCloserService : AccessibilityService() {
             }
             return false
         }
-        if (now() - lastReturnAt < 15_000) return false
+        if (checkGap && now() - lastReturnAt < 15_000) return false
+        return true
+    }
+
+    private fun bookReturn() {
+        lastReturnAt = now()
+        if (sessionActive) sessionReturns++
+        noteReturn()
+    }
+
+    private fun returnToApp(): Boolean {
+        if (!returnBudgetOk()) return false
         val ok = launchAppIntent()
-        if (ok) {
-            lastReturnAt = now()
-            if (sessionActive) sessionReturns++
-            noteReturn()
-        }
+        if (ok) bookReturn()
         return ok
     }
 
@@ -2022,10 +2093,25 @@ class AdCloserService : AccessibilityService() {
         val waited = now() - returnStepAt
         when (returnStep) {
             0 -> if (waited > 1800) {
+                if (!returnBudgetOk(checkGap = false)) {
+                    // v2.24: the Recents fallback is a return too
+                    // and must obey the breaker and the per-session
+                    // cap. Ungated, it looped store<->game ~25
+                    // times while the breaker was suspended
+                    // (2026-11-14). The 15s gap is not applied
+                    // here: within one episode this fallback is a
+                    // one-shot, and episode repetition is what the
+                    // cap bounds.
+                    returningFromStore = false
+                    returnBlocked = true
+                    LogStore.add(this, "自動復帰が停止中のため、ストアからの復帰を中止します")
+                    return
+                }
                 // Launch intent did not bring the game forward: open
                 // Recents once as a fallback.
                 returnStep = 1
                 returnStepAt = now()
+                recentsArmed = true
                 performGlobalAction(GLOBAL_ACTION_RECENTS)
                 LogStore.add(this, "復帰の予備手段：履歴（タブ）を開きます")
             }
@@ -2055,6 +2141,7 @@ class AdCloserService : AccessibilityService() {
             3 -> if (waited > 2500) {
                 returningFromStore = false
                 returnBlocked = true
+                recentsArmed = false
                 LogStore.add(
                     this,
                     "自動で対象アプリに戻れませんでした。履歴から元のアプリを選んでください（監視は続けます）"
