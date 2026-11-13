@@ -602,6 +602,7 @@ class AdCloserService : AccessibilityService() {
                 // store-sheet episode — we are back, so it ended.
                 lastTargetPkg = pkg
                 lastTargetAt = now()
+                otherPkg = ""
                 if (storeCloseCount > 0 || storeEpisodes > 0 || storeGaveUp) {
                     storeCloseCount = 0
                     storeEpisodes = 0
@@ -652,7 +653,35 @@ class AdCloserService : AccessibilityService() {
             else -> {
                 val watch = sessionActive ||
                     (lastFailedSessionAt > 0 && now() - lastFailedSessionAt < 60_000)
-                if (watch) handleExcursion(pkg)
+                if (watch) {
+                    // v2.19 user-takeover rule: known advertiser apps
+                    // (Meta overlay, TikTok, Temu) are excursions to
+                    // return from immediately. Any OTHER app is never
+                    // returned from — if one stays in front for 6s
+                    // during a session, the USER has taken over (in
+                    // the incident they opened Muse to report the
+                    // problem, and this app's own settings screen):
+                    // end the session instead of fighting them.
+                    val adPkgs = setOf(
+                        "com.facebook.aura", "com.zhiliaoapp.musically",
+                        "com.ss.android.ugc.trill", "com.ss.android.ugc.aweme",
+                        "com.einnovation.temu"
+                    )
+                    if (pkg != otherPkg) {
+                        otherPkg = pkg
+                        otherPkgSince = now()
+                    }
+                    when {
+                        pkg in adPkgs -> handleExcursion(pkg)
+                        sessionActive && now() - otherPkgSince > 6_000 ->
+                            endSession("別のアプリが使われているため監視を終了します")
+                        else -> {
+                            // Non-ad app, session active, under 6s:
+                            // wait and see. Watch-only (no session):
+                            // nothing to return from either.
+                        }
+                    }
+                }
             }
         }
     }
@@ -677,7 +706,7 @@ class AdCloserService : AccessibilityService() {
         if (waited > 1800 && excursionTries < 3) {
             excursionTries++
             excursionAt = now()
-            launchAppIntent()
+            if (!returnToApp()) returningFromExcursion = false
         } else if (excursionTries >= 3 && waited > 3000) {
             returningFromExcursion = false
             LogStore.add(this, "自動で対象アプリに戻れませんでした。手動で元のアプリに戻ってください")
@@ -1119,17 +1148,25 @@ class AdCloserService : AccessibilityService() {
                         topLeftStage = 3
                         tap(0.942, 0.061, "パターンB：右上の候補1")
                     } else if (topLeftStage == 3 && now() - lastTopLeftTapAt > 4000) {
+                        // v2.19: Meta end cards (CubeAway, 2026-11-13)
+                        // put the x inside a small circle at about
+                        // (92.4%, 6.4%) — the 94.2% candidates landed
+                        // on its edge and missed.
                         lastTopLeftTapAt = now()
                         topLeftStage = 4
-                        tap(0.942, 0.046, "パターンB：右上の候補2")
-                    } else if (topLeftStage == 4 && now() - lastTopLeftTapAt > 5000) {
+                        tap(0.924, 0.064, "パターンB：右上の候補2（丸×）")
+                    } else if (topLeftStage == 4 && now() - lastTopLeftTapAt > 4000) {
+                        lastTopLeftTapAt = now()
+                        topLeftStage = 5
+                        tap(0.942, 0.046, "パターンB：右上の候補3")
+                    } else if (topLeftStage == 5 && now() - lastTopLeftTapAt > 5000) {
                         // The x that appears after coming back from
                         // full-screen Play was never confirmed to sit at
                         // y=3%: retry the y=6% spot once before giving up.
                         lastTopLeftTapAt = now()
-                        topLeftStage = 5
+                        topLeftStage = 6
                         tap(0.058, 0.062, "パターンB/C：左上の候補1を再試行")
-                    } else if (topLeftStage == 5 && now() - lastTopLeftTapAt > 8000) {
+                    } else if (topLeftStage == 6 && now() - lastTopLeftTapAt > 8000) {
                         // None of the candidates closed the ad: stop so
                         // the app never keeps tapping, and let the user
                         // close it.
@@ -1242,8 +1279,57 @@ class AdCloserService : AccessibilityService() {
             returnStepAt = now()
             lastStoreActionAt = now()
             LogStore.add(this, "パターンC：ストア（全画面）から対象アプリへの復帰を開始")
-            launchAppIntent()
+            returnToApp()
         }
+    }
+
+    // ---- automatic-return circuit breaker (v2.19) ----
+    // Incident (user log 2026-11-13 20:59): after a Meta end card,
+    // the excursion return kept dragging the user back to the game
+    // whenever they opened ANY other app (including Muse, to
+    // report the problem, and this app's own settings) — each
+    // return reset the episode, so the 3-try cap never bound, and
+    // the user felt the phone was fighting them. Safety rules:
+    //  - every return flow goes through returnToApp();
+    //  - 3 returns inside 3 minutes suspend ALL automatic returns
+    //    for 10 minutes;
+    //  - a non-ad app staying foreground for 6s during a session
+    //    ends the session (the user has taken over; see evaluate).
+    private val returnTimes = mutableListOf<Long>()
+    private var returnSuspendUntil = 0L
+    private var returnSuspendLogged = false
+    private var otherPkg = ""
+    private var otherPkgSince = 0L
+
+    private fun returnGateOpen(): Boolean {
+        val t = now()
+        returnTimes.removeAll { t - it > 180_000 }
+        if (t < returnSuspendUntil) {
+            if (!returnSuspendLogged) {
+                returnSuspendLogged = true
+                LogStore.add(this, "自動復帰を停止中です（ユーザーの操作を優先）")
+            }
+            return false
+        }
+        return true
+    }
+
+    private fun noteReturn() {
+        val t = now()
+        returnTimes.add(t)
+        returnTimes.removeAll { t - it > 180_000 }
+        if (returnTimes.size >= 3 && t >= returnSuspendUntil) {
+            returnSuspendUntil = t + 600_000
+            returnSuspendLogged = false
+            LogStore.add(this, "短時間に自動復帰が繰り返されたため、10分間停止します")
+        }
+    }
+
+    private fun returnToApp(): Boolean {
+        if (!returnGateOpen()) return false
+        val ok = launchAppIntent()
+        if (ok) noteReturn()
+        return ok
     }
 
     /** Bring the session's target app to the front via its launch intent. */
@@ -1853,13 +1939,13 @@ class AdCloserService : AccessibilityService() {
                     // and retry the launch intent instead.
                     returnStep = 3
                     returnStepAt = now()
-                    launchAppIntent()
+                    returnToApp()
                 }
             }
             2 -> if (waited > 2000) {
                 returnStep = 3
                 returnStepAt = now()
-                launchAppIntent()
+                returnToApp()
             }
             3 -> if (waited > 2500) {
                 returningFromStore = false
