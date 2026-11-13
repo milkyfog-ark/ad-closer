@@ -92,6 +92,22 @@ class AdCloserService : AccessibilityService() {
     private var topLeftStage = 0 // 0 = none, 1 = tried y=6%, 2 = tried y=3%, 3 = retried y=6%
     private var storeCloseCount = 0
     private var storeExcursions = 0
+    // v2.16: store-sheet episodes. The sheet can open over an end
+    // card BEFORE any session starts (foreground flips to the store,
+    // so no session ever sees the card), and the old code also gave
+    // up permanently after 3 x taps (count reset only at session
+    // start, and reaching the cap ended the session). The user
+    // explicitly asked for this x to be automated (2026-11-13), so
+    // the store branch now also arms from recency: it acts when a
+    // target app was in the foreground within the last 10 minutes.
+    // Episodes: 3 x taps -> one Back -> 30s backoff -> re-arm,
+    // up to 3 episodes, then a single give-up log line.
+    private var lastTargetPkg = ""
+    private var lastTargetAt = 0L
+    private var storeEpisodes = 0
+    private var storeRearmAt = 0L
+    private var storeBackUsed = false
+    private var storeGaveUp = false
     private var noAdSignalSince = 0L
     private var lastStoreActionAt = 0L
     // Return-from-full-screen-store state (v0.2). The v0.1 approach tapped
@@ -389,6 +405,10 @@ class AdCloserService : AccessibilityService() {
         topLeftStage = 0
         storeCloseCount = 0
         storeExcursions = 0
+        storeEpisodes = 0
+        storeRearmAt = 0L
+        storeBackUsed = false
+        storeGaveUp = false
         noAdSignalSince = 0L
         returningFromStore = false
         returnStep = 0
@@ -563,6 +583,18 @@ class AdCloserService : AccessibilityService() {
 
         when {
             isTarget(pkg) -> {
+                // v2.16: remember the last target foreground (arms
+                // the store branch by recency) and close out any
+                // store-sheet episode — we are back, so it ended.
+                lastTargetPkg = pkg
+                lastTargetAt = now()
+                if (storeCloseCount > 0 || storeEpisodes > 0 || storeGaveUp) {
+                    storeCloseCount = 0
+                    storeEpisodes = 0
+                    storeRearmAt = 0L
+                    storeBackUsed = false
+                    storeGaveUp = false
+                }
                 if (returningFromStore) {
                     // We made it back to the target app from the store.
                     returningFromStore = false
@@ -586,9 +618,19 @@ class AdCloserService : AccessibilityService() {
                 if (pkg == GAME_PKG) maybeFarmTick()
             }
             pkg == STORE_PKG -> {
+                // v2.16: also arm from recency — a sheet that opens
+                // over an end card before any session starts must
+                // still be closed automatically. Recency is scoped
+                // to target apps, so the user's own Play browsing
+                // from the launcher is never touched.
+                val recentTarget = lastTargetAt > 0 && now() - lastTargetAt < 600_000
                 val watch = sessionActive ||
-                    (lastFailedSessionAt > 0 && now() - lastFailedSessionAt < 60_000)
-                if (watch && Prefs.storeRecovery(this)) handleStore(snap)
+                    (lastFailedSessionAt > 0 && now() - lastFailedSessionAt < 60_000) ||
+                    recentTarget
+                if (watch && Prefs.storeRecovery(this)) {
+                    if (!sessionActive && recentTarget) sessionPkg = lastTargetPkg
+                    handleStore(snap)
+                }
             }
             pkg in RECENTS_PKGS -> {
                 if (returningFromStore) driveReturn(inRecents = true)
@@ -1124,8 +1166,34 @@ class AdCloserService : AccessibilityService() {
             (playHeader.centerY().toDouble() / screenH()) in 0.15..0.32
         if (isSheet) {
             if (now() - lastStoreActionAt < 2500) return
+            if (storeGaveUp) return
             if (storeCloseCount >= 3) {
-                endSession("ストアが何度も開くため停止しました（手動で閉じてください）")
+                // Episode escalation (v2.16): one Back press, then a
+                // 30s backoff and a fresh episode, instead of the old
+                // permanent stop. The sheet may simply not have been
+                // ready for the first taps.
+                if (!storeBackUsed) {
+                    storeBackUsed = true
+                    lastStoreActionAt = now()
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    LogStore.add(this, "ストアのシート：×で閉じないため「戻る」で閉じます")
+                    return
+                }
+                if (storeRearmAt == 0L) {
+                    storeRearmAt = now() + 30_000
+                    LogStore.add(this, "ストアのシートが閉じません。30秒後に再試行します")
+                } else if (now() >= storeRearmAt) {
+                    if (storeEpisodes < 3) {
+                        storeEpisodes++
+                        storeCloseCount = 0
+                        storeBackUsed = false
+                        storeRearmAt = 0L
+                        LogStore.add(this, "ストアのシート：再試行を開始します")
+                    } else {
+                        storeGaveUp = true
+                        LogStore.add(this, "ストアのシートを自動で閉じられませんでした（手動で閉じてください）")
+                    }
+                }
                 return
             }
             lastStoreActionAt = now()
