@@ -209,6 +209,13 @@ class AdCloserService : AccessibilityService() {
     // of timing them (see the keeper block for why).
     private var lastFarmNudgeAt = 0L
     private var x2MissingFrames = 0
+    // v2.33: keeper hardening — continuous-HUD stretch tracking
+    // (x2HudSince/x2HudLastAt) and the disarm-until-seen flag
+    // (x2TapDisarmed). See the keeper block for the failure these
+    // prevent.
+    private var x2HudSince = 0L
+    private var x2HudLastAt = 0L
+    private var x2TapDisarmed = false
     // When the last session ended in failure (v2.5 excursion watch).
     private var lastFailedSessionAt = 0L
 
@@ -2282,33 +2289,49 @@ class AdCloserService : AccessibilityService() {
                 val x2Warm = fractionWhere(bmp, 0.05, 0.125, 0.24, 0.275) { h ->
                     h[0] in 18f..58f && h[1] > 0.35f && h[2] > 0.20f
                 }
-                // Stability, take two (v2.13). One reading is not
-                // enough (v2.11): transition frames right after a
-                // panel closes read "no x2" while the glyph fades
-                // in, and tapping then toggles the speed back down.
-                // But v2.11's "3 continuous seconds" never fired in
-                // the user's 2026-11-13 log: with card picks every
-                // ~5s and the 4.5s post-tap cooldown, processed
-                // battle frames arrive in ~1-frame bursts, and each
-                // pick reset the timer — the keeper starved even
-                // though every gate measured fine on the user's
-                // screenshot (icon 0.29, label 0.25, strip 0.00).
-                // Now the evidence is a FRAME COUNT: 3 processed
-                // battle frames reading "missing", accumulated
-                // across selection gaps (the speed setting survives
-                // the selection overlay, so the evidence stays
-                // valid). A single transition frame can contribute
-                // at most 1 of the 3. Any frame that SEES the x2,
-                // and any clearly-not-battle frame, resets the count.
+                // Stability, take three (v2.33). The v2.13 frame
+                // count (3 accumulated "missing" frames, 20s tap
+                // throttle) flip-flopped the speed in the user's
+                // 2026-11-14 02:11–02:12 log: keeper taps at 02:11:48,
+                // 02:12:12 and 02:12:38, each within seconds of a
+                // battle (re)starting, while the user watched the
+                // "x2" displayed under the label. The strip itself
+                // is NOT mis-calibrated — offline it reads 0.088 on
+                // the user's own x2-present battle screenshot versus
+                // 0.000 on x2-absent ones — so the false "missing"
+                // frames are the OPENING frames of each battle,
+                // before the glyph renders / while the HUD fades
+                // in, and with selections every few seconds those
+                // opening frames are most of what the keeper ever
+                // sees. Three defences, in order:
+                //  1. Grace: "missing" frames count only after the
+                //     battle HUD has been CONTINUOUSLY present for
+                //     4s (a >3s gap between confirmed battle frames
+                //     restarts the stretch, so selections and panel
+                //     transitions always re-arm the grace).
+                //  2. Volume: 5 counted frames are required.
+                //  3. Disarm: after a keeper tap, no further tap
+                //     until some frame positively SEES the x2
+                //     again (a correct tap makes it appear; a
+                //     mis-tap can no longer be compounded), and
+                //     taps are at least 90s apart regardless.
+                // A frame that sees the x2 still resets the count
+                // (and re-arms), and a clearly-not-battle frame
+                // still resets it (below).
+                val t = now()
+                if (t - x2HudLastAt > 3_000) x2HudSince = t
+                x2HudLastAt = t
                 if (x2Warm >= 0.03) {
                     x2MissingFrames = 0
-                } else {
+                    x2TapDisarmed = false
+                } else if (!x2TapDisarmed && t - x2HudSince >= 4_000) {
                     x2MissingFrames++
-                    if (x2MissingFrames >= 3 &&
-                        now() - lastSpeedTapAt > 20_000
+                    if (x2MissingFrames >= 5 &&
+                        t - lastSpeedTapAt > 90_000
                     ) {
-                        lastSpeedTapAt = now()
+                        lastSpeedTapAt = t
                         x2MissingFrames = 0
+                        x2TapDisarmed = true
                         tap(0.082, 0.21, "周回：敵の移動速度アイコン（×2化）")
                     }
                 }

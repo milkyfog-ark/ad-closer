@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v2.32）"
+            android:text="広告クローザー（試作 v2.33）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
