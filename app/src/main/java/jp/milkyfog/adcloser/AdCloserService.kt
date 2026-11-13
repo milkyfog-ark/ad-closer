@@ -352,7 +352,28 @@ class AdCloserService : AccessibilityService() {
      * game — the user's "buttons get pressed by themselves" bug.
      * Refusing also asks the panel to move out of the way.
      */
+    private var lastSkipBlockLogAt = 0L
+
     private fun panelBlocks(fx: Double, fy: Double, why: String): Boolean {
+        // v2.34: the roulette panel's スキップ zone (x 0.55–0.80,
+        // y 0.50–0.60 — padded around the measured checkbox at
+        // (0.598–0.635, 0.543–0.568) and its label) is hard-blocked
+        // for EVERY point tap in this app, not just farming: the
+        // user has insisted since 2026-11-12 that the skip must
+        // never be pressed, and reported on 2026-11-14 that a press
+        // reaction shows there while the roulette driver runs.
+        // Whether the cause is a coordinate slip or the game
+        // treating an ill-timed tap as a skip input, no tap from
+        // this app may land in the zone. Every legitimate target
+        // lives outside it (roulette 確認 at y 0.624, card picks at
+        // x ≤ 0.495 / ≥ 0.825, ad close points at the edges).
+        if (fx in 0.55..0.80 && fy in 0.50..0.60) {
+            if (now() - lastSkipBlockLogAt > 5_000) {
+                lastSkipBlockLogAt = now()
+                LogStore.add(this, "$why：スキップ領域のためタップを中止しました")
+            }
+            return true
+        }
         val rect = Control.panelRect ?: return false
         val x = (screenW() * fx).toInt()
         val y = (screenH() * fy).toInt()
@@ -434,7 +455,7 @@ class AdCloserService : AccessibilityService() {
      * v2.32: a still longer press (500ms) for the roulette 確認.
      * Every shorter style has been ignored by this panel at least
      * once; the rotation in the roulette branch tries it alongside
-     * the double tap and the combo below.
+     * the plain tap and the double tap.
      */
     private fun tapPressLong(xFraction: Double, yFraction: Double, why: String) {
         if (panelBlocks(xFraction, yFraction, why)) return
@@ -449,21 +470,6 @@ class AdCloserService : AccessibilityService() {
         if (sessionActive) sessionTapped = true
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) を長押しタップ（500ms）")
-    }
-
-    /**
-     * v2.32: tap the panel body first, then the 確認 button 1.2s
-     * later. Some game panels (like the ad videos whose controls
-     * only appear after a tap, per the user's 2026-11-13 report)
-     * accept input only after a first tap wakes them; the roulette
-     * panel may behave the same way while its ejection animation
-     * runs.
-     */
-    private fun tapCombo(xFraction: Double, yFraction: Double, why: String) {
-        tap(0.50, 0.45, "周回：ルーレットのパネルをタップ（起こす）")
-        handler.postDelayed({
-            tapButton(xFraction, yFraction, why)
-        }, 1200)
     }
 
     private fun tapRect(r: Rect, why: String) {
@@ -2055,6 +2061,42 @@ class AdCloserService : AccessibilityService() {
         farmCooldownUntil = t + 4500
     }
 
+    /**
+     * v2.35: the MEASURED centre of the roulette's lime 確認
+     * button in this screenshot. Scans the button's neighbourhood
+     * (x 0.50–0.95, y 0.55–0.70) for the detection green and
+     * returns the bounding-box centre as screen fractions; falls
+     * back to the classic fixed point (0.712, 0.624) when too few
+     * green pixels are found. The tap helpers log the fractions
+     * they are given, so every attempt records the measured
+     * position in the action log — no fixed-coordinate guessing.
+     */
+    private fun rouConfirmCentre(bmp: Bitmap): Pair<Double, Double> {
+        var minFx = Double.MAX_VALUE
+        var maxFx = Double.MIN_VALUE
+        var minFy = Double.MAX_VALUE
+        var maxFy = Double.MIN_VALUE
+        var hits = 0
+        var fx = 0.50
+        while (fx <= 0.95) {
+            var fy = 0.55
+            while (fy <= 0.70) {
+                val h = hsvOf(bmp, fx, fy)
+                if (h[0] in 60f..106f && h[1] > 0.45f && h[2] > 0.55f) {
+                    hits++
+                    if (fx < minFx) minFx = fx
+                    if (fx > maxFx) maxFx = fx
+                    if (fy < minFy) minFy = fy
+                    if (fy > maxFy) maxFy = fy
+                }
+                fy += 0.004
+            }
+            fx += 0.004
+        }
+        if (hits < 30) return 0.712 to 0.624
+        return ((minFx + maxFx) / 2) to ((minFy + maxFy) / 2)
+    }
+
     private fun handleFarmBitmap(bmp: Bitmap) {
         // ステータス強化 screens share the lime banner at the top.
         // v1.0 calibration from the user's on-device diagnostics
@@ -2214,17 +2256,32 @@ class AdCloserService : AccessibilityService() {
             // scheme — 3 quick tries, then 20s slow retries — still
             // left this panel standing, and the user explicitly
             // rejected the slow pace (「サクサク自動周回して貰いたい」).
-            // The roulette now has its own fast driver, bypassing
-            // farmAct's 3-per-minute cap: an attempt every ~4s, up
-            // to 18 per panel instance (~80s), rotating THREE press
-            // styles — double tap, a 500ms press, and a wake-up
-            // combo (tap the panel body, then 確認 1.2s later) —
-            // across the three on-glyph points (v2.17). A panel
-            // instance is identified by continuous presence: an
-            // absence of 15s or more starts a new instance (and
-            // reports how many attempts the previous one had taken,
-            // when it was a hard one). Past 18 attempts the old
-            // farmAct slow path remains as the backstop.
+            // The roulette therefore got its own fast driver,
+            // bypassing farmAct's 3-per-minute cap.
+            //
+            // v2.34/v2.35 (user reports 2026-11-14 02:22 and
+            // 03:00): the user reported that while the driver runs,
+            // a PRESS REACTION shows on the スキップ checkbox —
+            // the control that must never be pressed — and then
+            // corrected Muse's "ejection animation" theory in
+            // full: this panel does not rotate and has no such
+            // animation; it is a static panel (it spins only when
+            // the player watches an ad via the left リフレッシュ
+            // button), and 確認 simply means "fine as-is". The
+            // v2.34 settle-wait built on that theory was dropped
+            // before it ever shipped. What v2.35 does instead:
+            // no fixed coordinates at all — each attempt taps the
+            // MEASURED centre of the lime button in the current
+            // screenshot (rouConfirmCentre), rotating three plain
+            // press styles (tap / double tap / 500ms press), every
+            // ~4s, up to 15 attempts per panel instance; the tap
+            // helpers log the fractions used, so the position is
+            // verifiable from the log. As a hard guarantee,
+            // panelBlocks() also refuses any point tap inside the
+            // skip zone itself (see there). A panel instance is
+            // identified by continuous presence: an absence of 15s
+            // or more starts a new instance. Past 15 attempts the
+            // old farmAct slow path remains as the backstop.
             val t = now()
             if (t - lastRouSeenAt > 15_000) {
                 if (rouStreak >= 4) {
@@ -2234,35 +2291,28 @@ class AdCloserService : AccessibilityService() {
                 lastRouTapAt = 0L
             }
             lastRouSeenAt = t
-            if (rouStreak < 18) {
+            val centre = rouConfirmCentre(bmp)
+            if (rouStreak < 15) {
                 if (t - lastRouTapAt >= 4_000) {
                     lastRouTapAt = t
                     rouStreak++
-                    val pts = arrayOf(
-                        0.712 to 0.624, 0.683 to 0.624, 0.741 to 0.624
-                    )
-                    val p = pts[rouTapIdx % pts.size]
                     val idx = rouTapIdx
                     rouTapIdx++
                     when (idx % 3) {
-                        0 -> tapButton(p.first, p.second, "周回：ルーレットの確認")
-                        1 -> tapPressLong(p.first, p.second, "周回：ルーレットの確認")
-                        else -> tapCombo(p.first, p.second, "周回：ルーレットの確認")
+                        0 -> tap(centre.first, centre.second, "周回：ルーレットの確認")
+                        1 -> tapButton(centre.first, centre.second, "周回：ルーレットの確認")
+                        else -> tapPressLong(centre.first, centre.second, "周回：ルーレットの確認")
                     }
                     farmCooldownUntil = t + 4500
                 }
             } else {
                 farmAct("ルーレット", "rou") {
-                    val pts = arrayOf(
-                        0.712 to 0.624, 0.683 to 0.624, 0.741 to 0.624
-                    )
-                    val p = pts[rouTapIdx % pts.size]
                     val idx = rouTapIdx
                     rouTapIdx++
                     if (idx % 2 == 1) {
-                        tapPress(p.first, p.second, "周回：ルーレットの確認")
+                        tapPress(centre.first, centre.second, "周回：ルーレットの確認")
                     } else {
-                        tapButton(p.first, p.second, "周回：ルーレットの確認")
+                        tapButton(centre.first, centre.second, "周回：ルーレットの確認")
                     }
                 }
             }
