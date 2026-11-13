@@ -144,10 +144,11 @@ class AdCloserService : AccessibilityService() {
     private var currentPkg: String = ""
     private var lastRecordedForeign = ""
     private var lastSpeedTapAt = 0L
-    // v2.11: panel-evacuation throttle for farming, and the x2
-    // keeper's "missing since" stability timer.
+    // v2.11: panel-evacuation throttle for farming.
+    // v2.13: the x2 keeper counts "missing" battle frames instead
+    // of timing them (see the keeper block for why).
     private var lastFarmNudgeAt = 0L
-    private var x2MissingSince = 0L
+    private var x2MissingFrames = 0
     // When the last session ended in failure (v2.5 excursion watch).
     private var lastFailedSessionAt = 0L
 
@@ -1415,9 +1416,6 @@ class AdCloserService : AccessibilityService() {
     private var farmSuppressed = ""
 
     private fun farmAct(sig: String, fingerprint: String, action: () -> Unit) {
-        // A known screen means the battle view is interrupted: the
-        // x2 keeper's stability timer starts over afterwards.
-        x2MissingSince = 0L
         if (fingerprint == farmSuppressed) return
         val t = now()
         if (fingerprint == farmFingerprint && t - farmSigWindowStart < 60_000) {
@@ -1608,28 +1606,41 @@ class AdCloserService : AccessibilityService() {
                 val x2Warm = fractionWhere(bmp, 0.05, 0.125, 0.24, 0.275) { h ->
                     h[0] in 18f..58f && h[1] > 0.35f && h[2] > 0.20f
                 }
-                // v2.11: a single "no x2" reading is not enough. The
-                // user's 2026-11-13 log showed a speed tap after
-                // nearly every card pick — the frames right after a
-                // panel closes are transition frames where the HUD
-                // (and its x2 glyph) is still fading in, so the strip
-                // reads empty even though x2 is on; the tap then
-                // toggles the speed back DOWN and the cycle repeats.
-                // Require the empty reading to hold for 3 continuous
-                // seconds of battle frames before tapping.
+                // Stability, take two (v2.13). One reading is not
+                // enough (v2.11): transition frames right after a
+                // panel closes read "no x2" while the glyph fades
+                // in, and tapping then toggles the speed back down.
+                // But v2.11's "3 continuous seconds" never fired in
+                // the user's 2026-11-13 log: with card picks every
+                // ~5s and the 4.5s post-tap cooldown, processed
+                // battle frames arrive in ~1-frame bursts, and each
+                // pick reset the timer — the keeper starved even
+                // though every gate measured fine on the user's
+                // screenshot (icon 0.29, label 0.25, strip 0.00).
+                // Now the evidence is a FRAME COUNT: 3 processed
+                // battle frames reading "missing", accumulated
+                // across selection gaps (the speed setting survives
+                // the selection overlay, so the evidence stays
+                // valid). A single transition frame can contribute
+                // at most 1 of the 3. Any frame that SEES the x2,
+                // and any clearly-not-battle frame, resets the count.
                 if (x2Warm >= 0.03) {
-                    x2MissingSince = 0L
+                    x2MissingFrames = 0
                 } else {
-                    if (x2MissingSince == 0L) x2MissingSince = now()
-                    if (now() - x2MissingSince >= 3_000 &&
+                    x2MissingFrames++
+                    if (x2MissingFrames >= 3 &&
                         now() - lastSpeedTapAt > 20_000
                     ) {
                         lastSpeedTapAt = now()
-                        x2MissingSince = 0L
+                        x2MissingFrames = 0
                         tap(0.082, 0.21, "周回：敵の移動速度アイコン（×2化）")
                     }
                 }
             }
+        } else if (iconGreen <= 0.02) {
+            // Clearly not the battle HUD (stage select, loading):
+            // forget any accumulated "x2 missing" evidence.
+            x2MissingFrames = 0
         }
 
         // No known screen in this frame: the previous screen is gone, so
