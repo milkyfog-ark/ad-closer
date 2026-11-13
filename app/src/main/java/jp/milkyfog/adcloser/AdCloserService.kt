@@ -84,6 +84,10 @@ class AdCloserService : AccessibilityService() {
     private var skipSince = 0L
     private var lastSkipTapAt = 0L
     private var skipTapCount = 0
+    // Pattern J state (v2.12): bottom-left 閉じる button.
+    private var jSince = 0L
+    private var lastJTapAt = 0L
+    private var jTapCount = 0
     private var lastTopLeftTapAt = 0L
     private var topLeftStage = 0 // 0 = none, 1 = tried y=6%, 2 = tried y=3%, 3 = retried y=6%
     private var storeCloseCount = 0
@@ -390,6 +394,9 @@ class AdCloserService : AccessibilityService() {
         skipSince = 0L
         lastSkipTapAt = 0L
         skipTapCount = 0
+        jSince = 0L
+        lastJTapAt = 0L
+        jTapCount = 0
         LogStore.add(this, "$why：広告の監視を開始")
     }
 
@@ -618,6 +625,18 @@ class AdCloserService : AccessibilityService() {
         val skipInCorner = skipBounds != null &&
             skipBounds.centerX() > screenW() * 0.60 &&
             skipBounds.centerY() < screenH() * 0.15
+        // Pattern J (v2.12, user report 2026-11-13): the pattern-I
+        // family's other variant — a black info panel at the bottom
+        // (title, domain, description) whose exit is the 「閉じる」
+        // button at the BOTTOM-LEFT (with the green check), next to
+        // a 詳細/ダウンロード CTA. This variant has no skip pill;
+        // the user instructed the bottom-left 閉じる is the button
+        // to press. Recognised by the label's bounds in the
+        // bottom-left area (pattern D covers only the top-left).
+        val closeBottomBounds = snap.boundsOf("閉じる") ?: snap.boundsOf("Close")
+        val closeBottomLeft = closeBottomBounds != null &&
+            closeBottomBounds.centerY() > screenH() * 0.85 &&
+            closeBottomBounds.centerX() < screenW() * 0.40
         // Pattern D (found 2026-11-11): an end card whose only close
         // affordance is a labelled pill button "閉じる" at the top-left
         // (about (10%, 6%)), with no reward text and no install text, so
@@ -679,7 +698,8 @@ class AdCloserService : AccessibilityService() {
         if (!sessionActive) {
             if (Prefs.resident(this) &&
                 (rewardReady || endCard || closeInCorner || metaCard || welcomeCard ||
-                    temuCreative || temuLanding || temuCard || storeGate || skipInCorner)
+                    temuCreative || temuLanding || temuCard || storeGate || skipInCorner ||
+                    closeBottomLeft)
             ) {
                 startSession(now(), "広告画面を検知")
             }
@@ -928,6 +948,26 @@ class AdCloserService : AccessibilityService() {
                 tapRect(skipBounds!!, "パターンI：右上の「スキップ」")
             } else if (skipTapCount >= 3 && now() - lastSkipTapAt > 8000) {
                 endSession("パターンI：「スキップ」を押せませんでした（手動で閉じてください）")
+            }
+            return
+        }
+
+        // Pattern J: tap the bottom-left 「閉じる」 button itself.
+        // Runs after pattern I: when both exist (the Gemini card),
+        // the user's instruction was the skip pill first.
+        if (!closeBottomLeft) jSince = 0L
+        if (closeBottomLeft && Prefs.patternB(this)) {
+            noAdSignalSince = 0L
+            if (jSince == 0L) jSince = now()
+            val jReady =
+                (now() - adStartAt) / 1000 >= Prefs.guardSeconds(this) ||
+                    now() - jSince >= 8_000
+            if (jReady && jTapCount < 3 && now() - lastJTapAt > 4000) {
+                lastJTapAt = now()
+                jTapCount++
+                tapRect(closeBottomBounds!!, "パターンJ：左下の「閉じる」ボタン")
+            } else if (jTapCount >= 3 && now() - lastJTapAt > 8000) {
+                endSession("パターンJ：左下の「閉じる」を押せませんでした（手動で閉じてください）")
             }
             return
         }
