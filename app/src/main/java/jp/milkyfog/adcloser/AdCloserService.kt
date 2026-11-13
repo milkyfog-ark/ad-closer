@@ -152,6 +152,11 @@ class AdCloserService : AccessibilityService() {
     // v2.25: end-card branch meter tracking (parked-meter escape).
     private var ecMeterVal = -1f
     private var ecMeterStuckSince = 0L
+    // v2.30: pill-only patience (see handleGame). sawStorePillAt =
+    // last time a top-left "Google Play" pill was on screen;
+    // pillOnlySince = start of the current pill-only stretch.
+    private var sawStorePillAt = 0L
+    private var pillOnlySince = 0L
     private var lastEventClass = ""
     // Pattern E state (v1.5, from the user's TikTok-card screenshots on
     // 2026-11-12): an end card whose only corner control is first a ">>"
@@ -462,6 +467,8 @@ class AdCloserService : AccessibilityService() {
         postReturnQuietUntil = 0L
         ecMeterVal = -1f
         ecMeterStuckSince = 0L
+        sawStorePillAt = 0L
+        pillOnlySince = 0L
         eStage = 0
         eTapCount = 0
         lastETapAt = 0L
@@ -803,6 +810,20 @@ class AdCloserService : AccessibilityService() {
         val rewardReady = snap.has("報酬を獲得しました") || snap.has("Reward granted")
         val endCard = snap.has("インストール") || snap.has("Google Play") ||
             snap.has("Install") || snap.has("ダウンロード")
+        // v2.30: the top-left "Google Play" pill, detected once
+        // here for the pattern-C / pill-only logic in the end-card
+        // branch and the finisher guard below.
+        val dmMain = resources.displayMetrics
+        val gpPill = snap.boundsByText.entries
+            .filter { it.key.contains("Google Play") }
+            .map { it.value }
+            .firstOrNull { r ->
+                r.centerX() < dmMain.widthPixels * 0.35 &&
+                    r.centerY() < dmMain.heightPixels * 0.12 &&
+                    r.width() < dmMain.widthPixels * 0.5 &&
+                    r.height() < dmMain.heightPixels * 0.10
+            }
+        if (gpPill != null) sawStorePillAt = now()
         // Pattern I (v2.10, user report 2026-11-12): an end card whose
         // working exit is the 「スキップ」 pill at the TOP-RIGHT (the
         // Gemini ad in the report; its bottom 「閉じる」/ダウンロード
@@ -1277,16 +1298,29 @@ class AdCloserService : AccessibilityService() {
                     // branches (or the escalation below, whose stage
                     // store returns no longer reset) finish the ad.
                     // Capped at 2 presses per session.
-                    val dm = resources.displayMetrics
-                    val pill = snap.boundsByText.entries
-                        .filter { it.key.contains("Google Play") }
-                        .map { it.value }
-                        .firstOrNull { r ->
-                            r.centerX() < dm.widthPixels * 0.35 &&
-                                r.centerY() < dm.heightPixels * 0.12 &&
-                                r.width() < dm.widthPixels * 0.5 &&
-                                r.height() < dm.heightPixels * 0.10
-                        }
+                    // v2.30: a screen whose ONLY end-card signal
+                    // is this pill is, for the FREECASH family, a
+                    // VIDEO STILL PLAYING — its end card has an
+                    // install button and no pill, and this video
+                    // exposes no meter node, so veto (b) cannot
+                    // protect it. Tapping now leaves for the store
+                    // mid-video and the video restarts on return
+                    // (the 2026-11-14 01:35-01:37 loop). Wait for
+                    // 75s of pill-only presence before treating
+                    // the screen as a pattern-C card: a finished
+                    // card never changes on its own, while a
+                    // playing video ends and changes the screen
+                    // (install texts appear, the pill goes away).
+                    val onlyPill = gpPill != null &&
+                        !snap.has("インストール") && !snap.has("Install") &&
+                        !snap.has("ダウンロード")
+                    if (onlyPill && cPillTaps == 0) {
+                        if (pillOnlySince == 0L) pillOnlySince = now()
+                        if (now() - pillOnlySince < 75_000) return
+                    } else {
+                        pillOnlySince = 0L
+                    }
+                    val pill = gpPill
                     if (pill != null && cPillTaps < 2 &&
                         now() - lastCPillTapAt > 6_000
                     ) {
@@ -1392,7 +1426,12 @@ class AdCloserService : AccessibilityService() {
         // unrecognised creative whose x sits at the first sweep
         // point, and waiting 50s just leaves the ad on screen.
         val finisherStart = if (!sessionTapped || funnelSeen) 15_000 else 50_000
-        if (!meterMid && !bareCanvas && now() - adStartAt >= finisherStart && now() - lastAnyTapAt > 10_000) {
+        // v2.30: while a store pill was seen recently and never
+        // pressed, the screen may be that video with its controls
+        // hidden — do not sweep blind points into it.
+        val pillGuard = cPillTaps == 0 && sawStorePillAt > 0 &&
+            now() - sawStorePillAt < 90_000
+        if (!meterMid && !bareCanvas && !pillGuard && now() - adStartAt >= finisherStart && now() - lastAnyTapAt > 10_000) {
             if (sweepCount < 6 && now() - lastSweepAt > sweepGapMs) {
                 lastSweepAt = now()
                 finisherActive = true
