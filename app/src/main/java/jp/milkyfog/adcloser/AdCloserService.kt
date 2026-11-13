@@ -676,6 +676,13 @@ class AdCloserService : AccessibilityService() {
                         bookReturn()
                     }
                     postReturnQuietUntil = now() + 15_000
+                    // v2.31: pattern C committed (pill pressed) —
+                    // prime the escalation so its first post-return
+                    // tap lands ~1.5s after the return, while the
+                    // revealed x is still visible.
+                    if (cPillTaps >= 1 && lastTopLeftTapAt > now() - 2_500) {
+                        lastTopLeftTapAt = now() - 2_500
+                    }
                     noAdSignalSince = 0L
                     if (eStage == 1) eStage = 2
                     LogStore.add(this, "対象アプリに戻りました。×の出現を待ちます")
@@ -684,6 +691,9 @@ class AdCloserService : AccessibilityService() {
                     // Back from the advertiser's app (pattern E).
                     returningFromExcursion = false
                     postReturnQuietUntil = now() + 15_000
+                    if (cPillTaps >= 1 && lastTopLeftTapAt > now() - 2_500) {
+                        lastTopLeftTapAt = now() - 2_500
+                    }
                     noAdSignalSince = 0L
                     if (eStage == 1) {
                         eStage = 2
@@ -1262,7 +1272,14 @@ class AdCloserService : AccessibilityService() {
                     // and tapping again at once reopens the store
                     // (the 2026-11-14 loop; user: "戻っても待たない
                     // ですぐ押すから延々ループした").
-                    if (now() < postReturnQuietUntil) return
+                    // v2.31: once the pill has been pressed
+                    // (pattern C committed), the opposite rule
+                    // wins — the x this flow reveals auto-hides
+                    // within a few seconds, so the next press must
+                    // be FAST (user correction 2026-11-14 01:46:
+                    // "再度押すのが遅いから消えちゃう"). No quiet
+                    // period then.
+                    if (cPillTaps == 0 && now() < postReturnQuietUntil) return
                     // v2.25 veto (b): a progress meter is still
                     // running — the VIDEO has not finished, no
                     // matter what texts it exposes. The FREECASH
@@ -1304,19 +1321,25 @@ class AdCloserService : AccessibilityService() {
                     // install button and no pill, and this video
                     // exposes no meter node, so veto (b) cannot
                     // protect it. Tapping now leaves for the store
-                    // mid-video and the video restarts on return
-                    // (the 2026-11-14 01:35-01:37 loop). Wait for
-                    // 75s of pill-only presence before treating
-                    // the screen as a pattern-C card: a finished
-                    // card never changes on its own, while a
-                    // playing video ends and changes the screen
-                    // (install texts appear, the pill goes away).
+                    // mid-video (the 2026-11-14 01:35-01:37
+                    // loop). Wait for 60s of pill-only presence
+                    // before treating the screen as a pattern-C
+                    // card: a finished card never changes on its
+                    // own, while a playing video ends and changes
+                    // the screen (install texts appear, the pill
+                    // goes away). (User correction 2026-11-14
+                    // 01:46: the video does NOT restart on return;
+                    // the loop's engine was the slow second press
+                    // — the controls this ad reveals on a tap
+                    // auto-hide within a few seconds. Hence 60s,
+                    // not 75s, and the fast post-return presses
+                    // below.)
                     val onlyPill = gpPill != null &&
                         !snap.has("インストール") && !snap.has("Install") &&
                         !snap.has("ダウンロード")
                     if (onlyPill && cPillTaps == 0) {
                         if (pillOnlySince == 0L) pillOnlySince = now()
-                        if (now() - pillOnlySince < 75_000) return
+                        if (now() - pillOnlySince < 60_000) return
                     } else {
                         pillOnlySince = 0L
                     }
@@ -1379,7 +1402,17 @@ class AdCloserService : AccessibilityService() {
                         "パターンB/C：左上の候補1を再試行"
                     )
                     val escWait = longArrayOf(3000, 4000, 4000, 4000, 4000, 4000, 5000)
-                    if (topLeftStage in 0..6 && now() - lastTopLeftTapAt > escWait[topLeftStage]) {
+                    // v2.31: within 10s after a return with pattern
+                    // C committed, stage taps come every 1.2s —
+                    // the revealed controls auto-hide within a few
+                    // seconds, so the normal 4s spacing keeps
+                    // arriving after they are gone.
+                    val stageWait = if (cPillTaps >= 1 && now() - lastReturnAt < 10_000) {
+                        1_200L
+                    } else {
+                        escWait[topLeftStage]
+                    }
+                    if (topLeftStage in 0..6 && now() - lastTopLeftTapAt > stageWait) {
                         val p = escPts[topLeftStage]
                         val label = escLabels[topLeftStage]
                         lastTopLeftTapAt = now()
