@@ -1708,10 +1708,14 @@ class AdCloserService : AccessibilityService() {
             // stalled farming on this panel.
             farmAct("ルーレット", "rou") {
                 // Cycle the tap point across attempts (same idea as
-                // the victory screen): if one spot on the button is
-                // somehow dead, the next try lands elsewhere on it.
+                // the victory screen) — but keep every point ON the
+                // 「確認」 lettering itself (v2.17, at the user's
+                // request): the white glyphs measured on the user's
+                // screenshots span x 0.656–0.768, y 0.612–0.636,
+                // centre (0.712, 0.624). One earlier point sat just
+                // above the glyphs on the button's body.
                 val pts = arrayOf(
-                    0.717 to 0.623, 0.69 to 0.610, 0.745 to 0.632
+                    0.712 to 0.624, 0.683 to 0.624, 0.741 to 0.624
                 )
                 val p = pts[rouTapIdx % pts.size]
                 val idx = rouTapIdx
