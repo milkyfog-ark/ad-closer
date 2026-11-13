@@ -171,6 +171,9 @@ class AdCloserService : AccessibilityService() {
     private var fCounterText = ""
     private var fStageSince = 0L
     private var fAdvanceTaps = 0
+    // v2.23: last pod meter reading and when it last moved.
+    private var fLastMeter = -1f
+    private var fMeterStuckSince = 0L
     // Multi-target state (v2.0): the package the current session belongs
     // to (returns go there, not always to the game), the package of the
     // window being evaluated, and the last foreign app recorded for the
@@ -446,6 +449,8 @@ class AdCloserService : AccessibilityService() {
         fCounterText = ""
         fStageSince = 0L
         fAdvanceTaps = 0
+        fLastMeter = -1f
+        fMeterStuckSince = 0L
         gTapCount = 0
         lastGTapAt = 0L
         gCardSince = 0L
@@ -687,7 +692,15 @@ class AdCloserService : AccessibilityService() {
                         otherPkgSince = now()
                     }
                     when {
-                        pkg in adPkgs -> handleExcursion(pkg)
+                        // v2.23: Meta pods flicker the foreground
+                        // between the game and aura every 2-3s (user
+                        // log 2026-11-14: ten excursion entries in
+                        // 22s, no returns). Acting on each flicker
+                        // only spams the log and churns state, so an
+                        // advertiser app must stay in front for 1.5s
+                        // before it counts as an excursion.
+                        pkg in adPkgs && now() - otherPkgSince > 1_500 ->
+                            handleExcursion(pkg)
                         sessionActive && now() - otherPkgSince > 4_000 ->
                             endSession("別のアプリが使われているため監視を終了します")
                         else -> {
@@ -935,16 +948,39 @@ class AdCloserService : AccessibilityService() {
                 fCounterText = counterText
                 fStageSince = now()
                 fAdvanceTaps = 0
+                fLastMeter = -1f
+                fMeterStuckSince = 0L
             }
             val meterDone = snap.maxProgress >= 0.99f
             val noMeterFallback = snap.maxProgress < 0f &&
                 now() - fStageSince >= 40_000
-            if ((meterDone || noMeterFallback) && fAdvanceTaps < 3 &&
-                now() - lastFTapAt > 5_000
+            // v2.23: some pods park the meter just short of full
+            // (user screenshot 2026-11-14: the bar sits visually
+            // complete and the corner button is the only way
+            // forward, yet the >= 0.99 gate never passes). A meter
+            // that has not moved for 8s at >= 0.90 is finished in
+            // practice; a stage lasting 75s is finished regardless.
+            val mp = snap.maxProgress
+            if (mp >= 0f) {
+                if (fLastMeter < 0f || mp - fLastMeter > 0.005f) {
+                    fLastMeter = mp
+                    fMeterStuckSince = now()
+                }
+            } else if (fLastMeter >= 0f) {
+                fLastMeter = -1f
+                fMeterStuckSince = 0L
+            }
+            val meterStuck = mp >= 0.90f && fMeterStuckSince > 0 &&
+                now() - fMeterStuckSince >= 8_000
+            val longStage = mp >= 0f && now() - fStageSince >= 75_000
+            if ((meterDone || meterStuck || longStage || noMeterFallback) &&
+                fAdvanceTaps < 3 && now() - lastFTapAt > 5_000
             ) {
                 lastFTapAt = now()
                 fAdvanceTaps++
                 fStageSince = now()
+                fLastMeter = -1f
+                fMeterStuckSince = 0L
                 tap(0.922, 0.103, "パターンF：次の広告へ（右上）")
             }
             return
@@ -1173,17 +1209,28 @@ class AdCloserService : AccessibilityService() {
                         topLeftStage = 4
                         tap(0.924, 0.064, "パターンB：右上の候補2（丸×）")
                     } else if (topLeftStage == 4 && now() - lastTopLeftTapAt > 4000) {
+                        // v2.23: the Meta corner (pod "next" button
+                        // and end-card x) sits LOWER, at about
+                        // (92.2%, 10.3%) — below every other
+                        // candidate. Pods whose counter/marker texts
+                        // are not exposed reach only this branch, and
+                        // up to v2.22 nothing here could hit that
+                        // spot (user reports 2026-11-14).
                         lastTopLeftTapAt = now()
                         topLeftStage = 5
-                        tap(0.942, 0.046, "パターンB：右上の候補3")
-                    } else if (topLeftStage == 5 && now() - lastTopLeftTapAt > 5000) {
+                        tap(0.922, 0.103, "パターンB：右上の候補3（Meta位置）")
+                    } else if (topLeftStage == 5 && now() - lastTopLeftTapAt > 4000) {
+                        lastTopLeftTapAt = now()
+                        topLeftStage = 6
+                        tap(0.942, 0.046, "パターンB：右上の候補4")
+                    } else if (topLeftStage == 6 && now() - lastTopLeftTapAt > 5000) {
                         // The x that appears after coming back from
                         // full-screen Play was never confirmed to sit at
                         // y=3%: retry the y=6% spot once before giving up.
                         lastTopLeftTapAt = now()
-                        topLeftStage = 6
+                        topLeftStage = 7
                         tap(0.058, 0.062, "パターンB/C：左上の候補1を再試行")
-                    } else if (topLeftStage == 6 && now() - lastTopLeftTapAt > 8000) {
+                    } else if (topLeftStage == 7 && now() - lastTopLeftTapAt > 8000) {
                         // None of the candidates closed the ad: stop so
                         // the app never keeps tapping, and let the user
                         // close it.
