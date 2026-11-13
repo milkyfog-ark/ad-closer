@@ -79,6 +79,14 @@ class AdCloserService : AccessibilityService() {
     private var dLabelSince = 0L
     private var lastAnyTapAt = 0L
     private var sweepCount = 0
+    // v2.18: whether any real branch has tapped during this session,
+    // and whether the finisher sweep has begun. Sessions that never
+    // tapped are probably sitting on an ad no pattern recognised
+    // (the Temu lamp creative, 2026-11-13: its session died after
+    // 4 signal-less seconds while the ad was still on screen, and
+    // the log then claimed the ad had closed).
+    private var sessionTapped = false
+    private var finisherActive = false
     private var lastSweepAt = 0L
     // Pattern I state (v2.10): top-right スキップ pill.
     private var skipSince = 0L
@@ -326,6 +334,7 @@ class AdCloserService : AccessibilityService() {
             .build()
         gestureGuardUntil = now() + 300
         lastAnyTapAt = now()
+        if (sessionActive) sessionTapped = true
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
     }
@@ -350,6 +359,7 @@ class AdCloserService : AccessibilityService() {
             .build()
         gestureGuardUntil = now() + 900
         lastAnyTapAt = now()
+        if (sessionActive) sessionTapped = true
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
     }
@@ -372,6 +382,7 @@ class AdCloserService : AccessibilityService() {
             .build()
         gestureGuardUntil = now() + 600
         lastAnyTapAt = now()
+        if (sessionActive) sessionTapped = true
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) を長押しタップ")
     }
@@ -388,6 +399,7 @@ class AdCloserService : AccessibilityService() {
             .build()
         gestureGuardUntil = now() + 300
         lastAnyTapAt = now()
+        if (sessionActive) sessionTapped = true
         dispatchGesture(gesture, gestureCallback(why), null)
         LogStore.add(this, "$why をタップ")
     }
@@ -434,6 +446,8 @@ class AdCloserService : AccessibilityService() {
         lastAnyTapAt = 0L
         sweepCount = 0
         lastSweepAt = 0L
+        sessionTapped = false
+        finisherActive = false
         skipSince = 0L
         lastSkipTapAt = 0L
         skipTapCount = 0
@@ -1140,9 +1154,15 @@ class AdCloserService : AccessibilityService() {
         // mid-range: an early corner tap can open the store (the
         // pattern-F lesson).
         val meterMid = snap.maxProgress > 0.0 && snap.maxProgress < 0.99
-        if (!meterMid && now() - adStartAt >= 50_000 && now() - lastAnyTapAt > 10_000) {
+        // v2.18: a session that has never tapped gets the finisher
+        // at 15s instead of 50s — it is most likely parked on an
+        // unrecognised creative whose x sits at the first sweep
+        // point, and waiting 50s just leaves the ad on screen.
+        val finisherStart = if (sessionTapped) 50_000 else 15_000
+        if (!meterMid && now() - adStartAt >= finisherStart && now() - lastAnyTapAt > 10_000) {
             if (sweepCount < 3 && now() - lastSweepAt > 6000) {
                 lastSweepAt = now()
+                finisherActive = true
                 val pts = arrayOf(0.927 to 0.064, 0.898 to 0.064, 0.942 to 0.061)
                 val p = pts[sweepCount]
                 sweepCount++
@@ -1153,9 +1173,20 @@ class AdCloserService : AccessibilityService() {
             }
         }
 
-        // In the game with no ad signals: the ad is over.
+        // In the game with no ad signals: the ad is over. Sessions
+        // that tapped follow the usual 4s rule; sessions that never
+        // tapped (or are mid-finisher) get 30s, because "no signals"
+        // for them usually means an ad no pattern recognised, not
+        // a closed ad (the lamp-creative incident, 2026-11-13).
         if (noAdSignalSince == 0L) noAdSignalSince = now()
-        if (now() - noAdSignalSince > 4000) {
+        val deathMs = if (sessionTapped && !finisherActive) 4_000 else 30_000
+        if (now() - noAdSignalSince > deathMs) {
+            if (!sessionTapped) {
+                // Leave evidence: what the unrecognised screen
+                // actually exposed, for the next diagnosis.
+                val texts = snap.texts.take(8).joinToString(" / ") { it.take(20) }
+                LogStore.add(this, "診断：無信号で終了した画面のテキスト=[$texts]")
+            }
             endSession("広告が閉じたと判断して待機に戻ります")
         }
     }
