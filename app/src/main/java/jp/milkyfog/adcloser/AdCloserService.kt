@@ -338,6 +338,28 @@ class AdCloserService : AccessibilityService() {
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) をタップ")
     }
 
+    /**
+     * Firm single press (v2.15): one 280ms stroke. The 確認 buttons
+     * have now ignored plain 70ms taps (v1.2/v1.4) and 80ms double
+     * taps (v1.6+) alike, while single taps work fine on card picks
+     * and the speed icon — so the confirm actions alternate between
+     * the double tap and this longer press across attempts, in case
+     * the game's button handler wants a sustained touch.
+     */
+    private fun tapPress(xFraction: Double, yFraction: Double, why: String) {
+        if (panelBlocks(xFraction, yFraction, why)) return
+        val x = (screenW() * xFraction).toFloat()
+        val y = (screenH() * yFraction).toFloat()
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 280))
+            .build()
+        gestureGuardUntil = now() + 600
+        lastAnyTapAt = now()
+        dispatchGesture(gesture, gestureCallback(why), null)
+        LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) を長押しタップ")
+    }
+
     private fun tapRect(r: Rect, why: String) {
         if (panelBlocks(
                 r.centerX().toDouble() / screenW(),
@@ -1421,16 +1443,20 @@ class AdCloserService : AccessibilityService() {
     // and the v1.4 sleep then parked the screen forever. These
     // panels appear to become responsive later than their buttons
     // render (reel / ejection animation), so giving up after ~10s
-    // is too early: while the same screen persists, retry once
-    // every 15s, up to 4 more times, before sleeping for real.
+    // is too early: while the same screen persists, keep retrying
+    // at a slow interval before sleeping for real. v2.14 shipped
+    // 15s x 4; the user's next log showed even that window may be
+    // short (and every press style so far ignored), so v2.15
+    // widened it to 20s x 8 and alternates the press style.
     private var farmSlowAt = 0L
     private var farmSlowLeft = 0
     private var rouTapIdx = 0
+    private var vicTapIdx = 0
 
     private fun farmAct(sig: String, fingerprint: String, action: () -> Unit) {
         val t = now()
         if (fingerprint == farmSuppressed) {
-            if (farmSlowLeft > 0 && t - farmSlowAt >= 15_000) {
+            if (farmSlowLeft > 0 && t - farmSlowAt >= 20_000) {
                 farmSlowAt = t
                 farmSlowLeft--
                 LogStore.add(this, "周回：$sig はまだ同じ画面のため、ゆっくり再試行します（残り $farmSlowLeft 回）")
@@ -1450,7 +1476,7 @@ class AdCloserService : AccessibilityService() {
         if (farmSigCount > 3) {
             farmSuppressed = fingerprint
             farmSlowAt = t
-            farmSlowLeft = 4
+            farmSlowLeft = 8
             LogStore.add(this, "周回：この画面（$sig）は自動で進められなかったため、間隔を空けて再試行します")
             return
         }
@@ -1553,9 +1579,16 @@ class AdCloserService : AccessibilityService() {
                 doubleArrayOf(0.255, 0.688),
                 doubleArrayOf(0.300, 0.705)
             )
-            val idx = if (farmFingerprint == "vic") minOf(farmSigCount, 2) else 0
-            val p = pts[idx]
-            farmAct("勝利", "vic") { tapButton(p[0], p[1], "周回：勝利の確認") }
+            val p = pts[vicTapIdx % pts.size]
+            val vidx = vicTapIdx
+            vicTapIdx++
+            farmAct("勝利", "vic") {
+                if (vidx % 2 == 1) {
+                    tapPress(p[0], p[1], "周回：勝利の確認")
+                } else {
+                    tapButton(p[0], p[1], "周回：勝利の確認")
+                }
+            }
             return
         }
 
@@ -1613,8 +1646,15 @@ class AdCloserService : AccessibilityService() {
                     0.717 to 0.623, 0.69 to 0.610, 0.745 to 0.632
                 )
                 val p = pts[rouTapIdx % pts.size]
+                val idx = rouTapIdx
                 rouTapIdx++
-                tapButton(p.first, p.second, "周回：ルーレットの確認")
+                // Alternate the press style too (v2.15): double tap,
+                // then a firm long press, and so on.
+                if (idx % 2 == 1) {
+                    tapPress(p.first, p.second, "周回：ルーレットの確認")
+                } else {
+                    tapButton(p.first, p.second, "周回：ルーレットの確認")
+                }
             }
             return
         }
