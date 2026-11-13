@@ -79,6 +79,9 @@ class AdCloserService : AccessibilityService() {
     private var dLabelSince = 0L
     private var lastAnyTapAt = 0L
     private var sweepCount = 0
+    // v2.22: gap before the next sweep tap; drops to 1.2s right
+    // after the reveal tap (see the finisher).
+    private var sweepGapMs = 6_000L
     // v2.18: whether any real branch has tapped during this session,
     // and whether the finisher sweep has begun. Sessions that never
     // tapped are probably sitting on an ad no pattern recognised
@@ -455,6 +458,7 @@ class AdCloserService : AccessibilityService() {
         dLabelSince = 0L
         lastAnyTapAt = 0L
         sweepCount = 0
+        sweepGapMs = 6_000L
         funnelSeen = false
         lastSweepAt = 0L
         sessionTapped = false
@@ -1210,26 +1214,35 @@ class AdCloserService : AccessibilityService() {
         // point, and waiting 50s just leaves the ad on screen.
         val finisherStart = if (!sessionTapped || funnelSeen) 15_000 else 50_000
         if (!meterMid && now() - adStartAt >= finisherStart && now() - lastAnyTapAt > 10_000) {
-            if (sweepCount < 4 && now() - lastSweepAt > 6000) {
+            if (sweepCount < 5 && now() - lastSweepAt > sweepGapMs) {
                 lastSweepAt = now()
                 finisherActive = true
-                // v2.21: candidate 2 is the storegate pill position.
-                // Some networks draw the whole video UI without
-                // exposing the pill's text, so the pattern-H branch
-                // can never see it; the position is fixed, so the
-                // finisher tries it blind (user instruction: that
-                // pill is what must be pressed on such screens).
+                // v2.21: the storegate pill position is a candidate:
+                // some networks draw the whole video UI without
+                // exposing the pill's text, so pattern H can never
+                // see it; the position is fixed, so try it blind.
+                // v2.22: candidate 2 is a REVEAL tap. The user
+                // reports some videos show NO controls at all until
+                // the screen is tapped once, and the controls then
+                // auto-hide again within a few seconds (possibly
+                // anti-bot). So the reveal tap is immediately
+                // followed (1.2s) by the storegate tap while the
+                // pill is visible; if the reveal tap itself counts
+                // as the video's click-through, the store flows
+                // handle whatever opens.
                 val pts = arrayOf(
-                    0.927 to 0.064, 0.158 to 0.062, 0.898 to 0.064, 0.942 to 0.061
+                    0.927 to 0.064, 0.50 to 0.45, 0.158 to 0.062,
+                    0.898 to 0.064, 0.942 to 0.061
                 )
                 val p = pts[sweepCount]
                 sweepCount++
-                if (sweepCount == 2) {
-                    tap(p.first, p.second, "最終手段：左上の「ストアを開く」候補")
-                } else {
-                    tap(p.first, p.second, "最終手段：右上の×候補$sweepCount")
+                sweepGapMs = if (sweepCount == 2) 1_200 else 6_000
+                when (sweepCount) {
+                    2 -> tap(p.first, p.second, "最終手段：画面をタップ（ボタンを表示）")
+                    3 -> tap(p.first, p.second, "最終手段：左上の「ストアを開く」候補")
+                    else -> tap(p.first, p.second, "最終手段：右上の×候補$sweepCount")
                 }
-            } else if (sweepCount >= 4 && now() - lastSweepAt > 8000) {
+            } else if (sweepCount >= 5 && now() - lastSweepAt > 8000) {
                 endSession("最終手段の×でも閉じられませんでした（手動で閉じてください）")
                 return
             }
