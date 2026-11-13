@@ -1276,50 +1276,49 @@ class AdCloserService : AccessibilityService() {
                     // 2026-11-12 log showed an end card where all three
                     // top-left candidates failed — some cards put the x
                     // at the top-RIGHT with no reward pill for pattern A
-                    // to key on. Try left x2, then right x2, then retry
-                    // the first left spot before giving up.
-                    if (topLeftStage == 0 && now() - lastTopLeftTapAt > 3000) {
+                    // to key on. Candidate history: (92.4%, 6.4%) is
+                    // the circled x of Meta end cards (v2.19, CubeAway);
+                    // (92.2%, 10.3%) is the Meta pod corner — the pod
+                    // "next" button and end-card x sit LOWER than
+                    // every other candidate (v2.23).
+                    // v2.27: when no "Google Play" pill was ever found
+                    // on this card, the left-top fixed points have
+                    // nothing to hit (a real pill is pressed by its
+                    // bounds above) — the most likely close spot is
+                    // then the Meta corner, so try it FIRST. The
+                    // 2026-11-14 01:10 log showed a text-hidden Meta
+                    // pod (Ad 1 of 2 / Ad 2 of 2, markers not exposed)
+                    // flailing through four wrong corners for ~50s
+                    // before the escalation reached that spot. When a
+                    // pill WAS tried, keep the original left-first
+                    // order (pattern C cards).
+                    val escPts = if (cPillTaps == 0) arrayOf(
+                        0.922 to 0.103, 0.058 to 0.062, 0.058 to 0.028,
+                        0.942 to 0.061, 0.924 to 0.064, 0.942 to 0.046,
+                        0.058 to 0.062
+                    ) else arrayOf(
+                        0.058 to 0.062, 0.058 to 0.028, 0.942 to 0.061,
+                        0.924 to 0.064, 0.922 to 0.103, 0.942 to 0.046,
+                        0.058 to 0.062
+                    )
+                    val escLabels = if (cPillTaps == 0) arrayOf(
+                        "パターンB：右上の候補（Meta位置）",
+                        "パターンB/C：左上の候補1", "パターンB：左上の候補2",
+                        "パターンB：右上の候補1", "パターンB：右上の候補2（丸×）",
+                        "パターンB：右上の候補4", "パターンB/C：左上の候補1を再試行"
+                    ) else arrayOf(
+                        "パターンB/C：左上の候補1", "パターンB：左上の候補2",
+                        "パターンB：右上の候補1", "パターンB：右上の候補2（丸×）",
+                        "パターンB：右上の候補3（Meta位置）", "パターンB：右上の候補4",
+                        "パターンB/C：左上の候補1を再試行"
+                    )
+                    val escWait = longArrayOf(3000, 4000, 4000, 4000, 4000, 4000, 5000)
+                    if (topLeftStage in 0..6 && now() - lastTopLeftTapAt > escWait[topLeftStage]) {
+                        val p = escPts[topLeftStage]
+                        val label = escLabels[topLeftStage]
                         lastTopLeftTapAt = now()
-                        topLeftStage = 1
-                        tap(0.058, 0.062, "パターンB/C：左上の候補1")
-                    } else if (topLeftStage == 1 && now() - lastTopLeftTapAt > 4000) {
-                        lastTopLeftTapAt = now()
-                        topLeftStage = 2
-                        tap(0.058, 0.028, "パターンB：左上の候補2")
-                    } else if (topLeftStage == 2 && now() - lastTopLeftTapAt > 4000) {
-                        lastTopLeftTapAt = now()
-                        topLeftStage = 3
-                        tap(0.942, 0.061, "パターンB：右上の候補1")
-                    } else if (topLeftStage == 3 && now() - lastTopLeftTapAt > 4000) {
-                        // v2.19: Meta end cards (CubeAway, 2026-11-13)
-                        // put the x inside a small circle at about
-                        // (92.4%, 6.4%) — the 94.2% candidates landed
-                        // on its edge and missed.
-                        lastTopLeftTapAt = now()
-                        topLeftStage = 4
-                        tap(0.924, 0.064, "パターンB：右上の候補2（丸×）")
-                    } else if (topLeftStage == 4 && now() - lastTopLeftTapAt > 4000) {
-                        // v2.23: the Meta corner (pod "next" button
-                        // and end-card x) sits LOWER, at about
-                        // (92.2%, 10.3%) — below every other
-                        // candidate. Pods whose counter/marker texts
-                        // are not exposed reach only this branch, and
-                        // up to v2.22 nothing here could hit that
-                        // spot (user reports 2026-11-14).
-                        lastTopLeftTapAt = now()
-                        topLeftStage = 5
-                        tap(0.922, 0.103, "パターンB：右上の候補3（Meta位置）")
-                    } else if (topLeftStage == 5 && now() - lastTopLeftTapAt > 4000) {
-                        lastTopLeftTapAt = now()
-                        topLeftStage = 6
-                        tap(0.942, 0.046, "パターンB：右上の候補4")
-                    } else if (topLeftStage == 6 && now() - lastTopLeftTapAt > 5000) {
-                        // The x that appears after coming back from
-                        // full-screen Play was never confirmed to sit at
-                        // y=3%: retry the y=6% spot once before giving up.
-                        lastTopLeftTapAt = now()
-                        topLeftStage = 7
-                        tap(0.058, 0.062, "パターンB/C：左上の候補1を再試行")
+                        topLeftStage++
+                        tap(p.first, p.second, label)
                     } else if (topLeftStage == 7 && now() - lastTopLeftTapAt > 8000) {
                         // None of the candidates closed the ad: stop so
                         // the app never keeps tapping, and let the user
