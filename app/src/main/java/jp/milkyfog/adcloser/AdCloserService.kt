@@ -1345,12 +1345,23 @@ class AdCloserService : AccessibilityService() {
         // mid-range: an early corner tap can open the store (the
         // pattern-F lesson).
         val meterMid = snap.maxProgress > 0.0 && snap.maxProgress < 0.99
+        // v2.26: a screen exposing NO text nodes at all is the
+        // game's own canvas (the game exposes nothing to the
+        // accessibility tree). The 2026-11-14 00:46-00:56 sessions
+        // outlived their ads into the victory/game screens — every
+        // closing diagnostic read texts=[] — and, funnelSeen having
+        // granted them the long grace, the finisher swept blind
+        // points (including the centre reveal tap) on the game
+        // itself. On a bare canvas there is nothing an ad branch
+        // could legitimately press: no finisher, and the session
+        // ends on the short rule like any finished ad.
+        val bareCanvas = snap.texts.isEmpty()
         // v2.18: a session that has never tapped gets the finisher
         // at 15s instead of 50s — it is most likely parked on an
         // unrecognised creative whose x sits at the first sweep
         // point, and waiting 50s just leaves the ad on screen.
         val finisherStart = if (!sessionTapped || funnelSeen) 15_000 else 50_000
-        if (!meterMid && now() - adStartAt >= finisherStart && now() - lastAnyTapAt > 10_000) {
+        if (!meterMid && !bareCanvas && now() - adStartAt >= finisherStart && now() - lastAnyTapAt > 10_000) {
             if (sweepCount < 5 && now() - lastSweepAt > sweepGapMs) {
                 lastSweepAt = now()
                 finisherActive = true
@@ -1391,7 +1402,7 @@ class AdCloserService : AccessibilityService() {
         // for them usually means an ad no pattern recognised, not
         // a closed ad (the lamp-creative incident, 2026-11-13).
         if (noAdSignalSince == 0L) noAdSignalSince = now()
-        val deathMs = if (sessionTapped && !finisherActive && !funnelSeen) 4_000 else 30_000
+        val deathMs = if (bareCanvas || (sessionTapped && !finisherActive && !funnelSeen)) 4_000 else 30_000
         if (now() - noAdSignalSince > deathMs) {
             if (!sessionTapped || funnelSeen) {
                 // Leave evidence: what the unrecognised screen
