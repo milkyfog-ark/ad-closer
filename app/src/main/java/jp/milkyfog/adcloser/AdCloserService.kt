@@ -439,6 +439,8 @@ class AdCloserService : AccessibilityService() {
         lastGTapAt = 0L
         gCardSince = 0L
         hScreenKey = ""
+        sessionReturns = 0
+        capLogged = false
         hSince = 0L
         hTapCount = 0
         lastHTapAt = 0L
@@ -673,7 +675,7 @@ class AdCloserService : AccessibilityService() {
                     }
                     when {
                         pkg in adPkgs -> handleExcursion(pkg)
-                        sessionActive && now() - otherPkgSince > 6_000 ->
+                        sessionActive && now() - otherPkgSince > 4_000 ->
                             endSession("別のアプリが使われているため監視を終了します")
                         else -> {
                             // Non-ad app, session active, under 6s:
@@ -1298,6 +1300,14 @@ class AdCloserService : AccessibilityService() {
     private val returnTimes = mutableListOf<Long>()
     private var returnSuspendUntil = 0L
     private var returnSuspendLogged = false
+    // v2.20: the v2.19 breaker still allowed a burst of 3 returns
+    // in 19 seconds (user log 2026-11-13 21:16:05/:11/:18, each
+    // triggered by the ad's own aura overlay re-foregrounding) —
+    // from the user's seat that IS being fought. So: at most 2
+    // returns per session, and at least 15s between returns.
+    private var sessionReturns = 0
+    private var lastReturnAt = 0L
+    private var capLogged = false
     private var otherPkg = ""
     private var otherPkgSince = 0L
 
@@ -1327,8 +1337,20 @@ class AdCloserService : AccessibilityService() {
 
     private fun returnToApp(): Boolean {
         if (!returnGateOpen()) return false
+        if (sessionActive && sessionReturns >= 2) {
+            if (!capLogged) {
+                capLogged = true
+                LogStore.add(this, "この広告では自動復帰の上限（2回）に達したため、復帰を停止します")
+            }
+            return false
+        }
+        if (now() - lastReturnAt < 15_000) return false
         val ok = launchAppIntent()
-        if (ok) noteReturn()
+        if (ok) {
+            lastReturnAt = now()
+            if (sessionActive) sessionReturns++
+            noteReturn()
+        }
         return ok
     }
 
