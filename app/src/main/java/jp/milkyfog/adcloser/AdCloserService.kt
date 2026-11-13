@@ -423,6 +423,42 @@ class AdCloserService : AccessibilityService() {
         LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) を長押しタップ")
     }
 
+    /**
+     * v2.32: a still longer press (500ms) for the roulette 確認.
+     * Every shorter style has been ignored by this panel at least
+     * once; the rotation in the roulette branch tries it alongside
+     * the double tap and the combo below.
+     */
+    private fun tapPressLong(xFraction: Double, yFraction: Double, why: String) {
+        if (panelBlocks(xFraction, yFraction, why)) return
+        val x = (screenW() * xFraction).toFloat()
+        val y = (screenH() * yFraction).toFloat()
+        val path = Path().apply { moveTo(x, y) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 500))
+            .build()
+        gestureGuardUntil = now() + 900
+        lastAnyTapAt = now()
+        if (sessionActive) sessionTapped = true
+        dispatchGesture(gesture, gestureCallback(why), null)
+        LogStore.add(this, "$why (${(xFraction * 100).toInt()}%, ${(yFraction * 100).toInt()}%) を長押しタップ（500ms）")
+    }
+
+    /**
+     * v2.32: tap the panel body first, then the 確認 button 1.2s
+     * later. Some game panels (like the ad videos whose controls
+     * only appear after a tap, per the user's 2026-11-13 report)
+     * accept input only after a first tap wakes them; the roulette
+     * panel may behave the same way while its ejection animation
+     * runs.
+     */
+    private fun tapCombo(xFraction: Double, yFraction: Double, why: String) {
+        tap(0.50, 0.45, "周回：ルーレットのパネルをタップ（起こす）")
+        handler.postDelayed({
+            tapButton(xFraction, yFraction, why)
+        }, 1200)
+    }
+
     private fun tapRect(r: Rect, why: String) {
         if (panelBlocks(
                 r.centerX().toDouble() / screenW(),
@@ -1974,6 +2010,12 @@ class AdCloserService : AccessibilityService() {
     private var farmSlowLeft = 0
     private var rouTapIdx = 0
     private var vicTapIdx = 0
+    // v2.32: the roulette's own fast driver. A panel instance is
+    // identified by continuous presence (a 15s absence starts a
+    // new instance); rouStreak counts its attempts so far.
+    private var rouStreak = 0
+    private var lastRouTapAt = 0L
+    private var lastRouSeenAt = 0L
 
     private fun farmAct(sig: String, fingerprint: String, action: () -> Unit) {
         val t = now()
@@ -2160,26 +2202,61 @@ class AdCloserService : AccessibilityService() {
             // advances this panel is the 確認 button below it. The
             // skip-tap loop plus clicker-caused gesture cancellations
             // stalled farming on this panel.
-            farmAct("ルーレット", "rou") {
-                // Cycle the tap point across attempts (same idea as
-                // the victory screen) — but keep every point ON the
-                // 「確認」 lettering itself (v2.17, at the user's
-                // request): the white glyphs measured on the user's
-                // screenshots span x 0.656–0.768, y 0.612–0.636,
-                // centre (0.712, 0.624). One earlier point sat just
-                // above the glyphs on the button's body.
-                val pts = arrayOf(
-                    0.712 to 0.624, 0.683 to 0.624, 0.741 to 0.624
-                )
-                val p = pts[rouTapIdx % pts.size]
-                val idx = rouTapIdx
-                rouTapIdx++
-                // Alternate the press style too (v2.15): double tap,
-                // then a firm long press, and so on.
-                if (idx % 2 == 1) {
-                    tapPress(p.first, p.second, "周回：ルーレットの確認")
-                } else {
-                    tapButton(p.first, p.second, "周回：ルーレットの確認")
+            //
+            // v2.32 (user report 2026-11-14 02:10): the v2.14/v2.15
+            // scheme — 3 quick tries, then 20s slow retries — still
+            // left this panel standing, and the user explicitly
+            // rejected the slow pace (「サクサク自動周回して貰いたい」).
+            // The roulette now has its own fast driver, bypassing
+            // farmAct's 3-per-minute cap: an attempt every ~4s, up
+            // to 18 per panel instance (~80s), rotating THREE press
+            // styles — double tap, a 500ms press, and a wake-up
+            // combo (tap the panel body, then 確認 1.2s later) —
+            // across the three on-glyph points (v2.17). A panel
+            // instance is identified by continuous presence: an
+            // absence of 15s or more starts a new instance (and
+            // reports how many attempts the previous one had taken,
+            // when it was a hard one). Past 18 attempts the old
+            // farmAct slow path remains as the backstop.
+            val t = now()
+            if (t - lastRouSeenAt > 15_000) {
+                if (rouStreak >= 4) {
+                    LogStore.add(this, "周回：前のルーレットは $rouStreak 回タップした時点で画面が変わりました")
+                }
+                rouStreak = 0
+                lastRouTapAt = 0L
+            }
+            lastRouSeenAt = t
+            if (rouStreak < 18) {
+                if (t - lastRouTapAt >= 4_000) {
+                    lastRouTapAt = t
+                    rouStreak++
+                    val pts = arrayOf(
+                        0.712 to 0.624, 0.683 to 0.624, 0.741 to 0.624
+                    )
+                    val p = pts[rouTapIdx % pts.size]
+                    val idx = rouTapIdx
+                    rouTapIdx++
+                    when (idx % 3) {
+                        0 -> tapButton(p.first, p.second, "周回：ルーレットの確認")
+                        1 -> tapPressLong(p.first, p.second, "周回：ルーレットの確認")
+                        else -> tapCombo(p.first, p.second, "周回：ルーレットの確認")
+                    }
+                    farmCooldownUntil = t + 4500
+                }
+            } else {
+                farmAct("ルーレット", "rou") {
+                    val pts = arrayOf(
+                        0.712 to 0.624, 0.683 to 0.624, 0.741 to 0.624
+                    )
+                    val p = pts[rouTapIdx % pts.size]
+                    val idx = rouTapIdx
+                    rouTapIdx++
+                    if (idx % 2 == 1) {
+                        tapPress(p.first, p.second, "周回：ルーレットの確認")
+                    } else {
+                        tapButton(p.first, p.second, "周回：ルーレットの確認")
+                    }
                 }
             }
             return
