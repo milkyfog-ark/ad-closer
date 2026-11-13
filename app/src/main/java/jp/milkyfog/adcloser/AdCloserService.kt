@@ -165,6 +165,10 @@ class AdCloserService : AccessibilityService() {
     private var returningFromExcursion = false
     private var excursionAt = 0L
     private var excursionTries = 0
+    // v2.29: excursion entry/give-up log throttle (see handleExcursion).
+    private var lastExcEntryPkg = ""
+    private var lastExcEntryAt = 0L
+    private var excEntryLogged = false
     // Pattern F state (v1.7): Meta Audience Network end card.
     private var fTapCount = 0
     // Pattern G state (v2.2): welcome-bonus interactive end card.
@@ -758,17 +762,36 @@ class AdCloserService : AccessibilityService() {
             returningFromExcursion = true
             excursionAt = now()
             excursionTries = 0
-            LogStore.add(this, "別アプリ（$pkg）に移りました。対象アプリに戻します")
+            // v2.29: while an advertiser app stays in front with
+            // the return budget closed, episodes used to end and
+            // re-enter every few seconds, repeating this entry
+            // line each time (2026-11-14 01:26: the same aura
+            // line 14 times in 35s). Log an entry at most once
+            // per package per minute; silent re-entries still
+            // retry the return in case the budget reopens.
+            excEntryLogged = pkg != lastExcEntryPkg || now() - lastExcEntryAt > 60_000
+            if (excEntryLogged) {
+                lastExcEntryPkg = pkg
+                lastExcEntryAt = now()
+                LogStore.add(this, "別アプリ（$pkg）に移りました。対象アプリに戻します")
+            }
             return
         }
         val waited = now() - excursionAt
         if (waited > 1800 && excursionTries < 3) {
             excursionTries++
             excursionAt = now()
-            if (!returnToApp()) returningFromExcursion = false
+            if (!returnToApp()) {
+                // Refused (budget closed): resolve this episode
+                // via the give-up branch instead of re-entering
+                // at once (v2.29).
+                excursionTries = 3
+            }
         } else if (excursionTries >= 3 && waited > 3000) {
             returningFromExcursion = false
-            LogStore.add(this, "自動で対象アプリに戻れませんでした。手動で元のアプリに戻ってください")
+            if (excEntryLogged) {
+                LogStore.add(this, "自動で対象アプリに戻れませんでした。手動で元のアプリに戻ってください")
+            }
         }
     }
 
@@ -1292,9 +1315,17 @@ class AdCloserService : AccessibilityService() {
                     // before the escalation reached that spot. When a
                     // pill WAS tried, keep the original left-first
                     // order (pattern C cards).
+                    // v2.29: the circled-x point (92.4%, 6.4%)
+                    // goes FIRST in the no-pill order: it is the
+                    // measured centre of the Freecash end card's x
+                    // (user screenshot 2026-11-14 01:29, where the
+                    // Meta-first order needed four tries and the
+                    // card only closed when the escalation reached
+                    // the 94.2% neighbour) and of Meta end cards
+                    // (CubeAway). The Meta pod corner stays second.
                     val escPts = if (cPillTaps == 0) arrayOf(
-                        0.922 to 0.103, 0.058 to 0.062, 0.058 to 0.028,
-                        0.942 to 0.061, 0.924 to 0.064, 0.942 to 0.046,
+                        0.924 to 0.064, 0.922 to 0.103, 0.942 to 0.061,
+                        0.058 to 0.062, 0.058 to 0.028, 0.942 to 0.046,
                         0.058 to 0.062
                     ) else arrayOf(
                         0.058 to 0.062, 0.058 to 0.028, 0.942 to 0.061,
@@ -1302,9 +1333,10 @@ class AdCloserService : AccessibilityService() {
                         0.058 to 0.062
                     )
                     val escLabels = if (cPillTaps == 0) arrayOf(
+                        "パターンB：右上の候補（丸×）",
                         "パターンB：右上の候補（Meta位置）",
+                        "パターンB：右上の候補1",
                         "パターンB/C：左上の候補1", "パターンB：左上の候補2",
-                        "パターンB：右上の候補1", "パターンB：右上の候補2（丸×）",
                         "パターンB：右上の候補4", "パターンB/C：左上の候補1を再試行"
                     ) else arrayOf(
                         "パターンB/C：左上の候補1", "パターンB：左上の候補2",
