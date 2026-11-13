@@ -87,6 +87,14 @@ class AdCloserService : AccessibilityService() {
     // the log then claimed the ad had closed).
     private var sessionTapped = false
     private var finisherActive = false
+    // v2.21: true once this session has been inside the pattern-H
+    // or pattern-G funnels. Funnel sessions get the long no-signal
+    // grace and the early finisher even after tapping: the next
+    // funnel stage may expose nothing at all (the 2026-11-13
+    // 21:16 storegate video — its pill text was not in the node
+    // tree, and the session, having tapped earlier stages, died
+    // under the plain 4s rule before anything could act).
+    private var funnelSeen = false
     private var lastSweepAt = 0L
     // Pattern I state (v2.10): top-right スキップ pill.
     private var skipSince = 0L
@@ -447,6 +455,7 @@ class AdCloserService : AccessibilityService() {
         dLabelSince = 0L
         lastAnyTapAt = 0L
         sweepCount = 0
+        funnelSeen = false
         lastSweepAt = 0L
         sessionTapped = false
         finisherActive = false
@@ -951,6 +960,7 @@ class AdCloserService : AccessibilityService() {
             else -> ""
         }
         if (hKey.isNotEmpty() && Prefs.patternB(this)) {
+            funnelSeen = true
             noAdSignalSince = 0L
             if (hKey != hScreenKey) {
                 hScreenKey = hKey
@@ -1025,6 +1035,7 @@ class AdCloserService : AccessibilityService() {
         // period since the session start, or for the card to have
         // been on screen continuously for 12s (manual-arm-late case).
         if (welcomeCard && Prefs.patternB(this)) {
+            funnelSeen = true
             noAdSignalSince = 0L
             if (gCardSince == 0L) gCardSince = now()
             val guardPassed =
@@ -1197,16 +1208,28 @@ class AdCloserService : AccessibilityService() {
         // at 15s instead of 50s — it is most likely parked on an
         // unrecognised creative whose x sits at the first sweep
         // point, and waiting 50s just leaves the ad on screen.
-        val finisherStart = if (sessionTapped) 50_000 else 15_000
+        val finisherStart = if (!sessionTapped || funnelSeen) 15_000 else 50_000
         if (!meterMid && now() - adStartAt >= finisherStart && now() - lastAnyTapAt > 10_000) {
-            if (sweepCount < 3 && now() - lastSweepAt > 6000) {
+            if (sweepCount < 4 && now() - lastSweepAt > 6000) {
                 lastSweepAt = now()
                 finisherActive = true
-                val pts = arrayOf(0.927 to 0.064, 0.898 to 0.064, 0.942 to 0.061)
+                // v2.21: candidate 2 is the storegate pill position.
+                // Some networks draw the whole video UI without
+                // exposing the pill's text, so the pattern-H branch
+                // can never see it; the position is fixed, so the
+                // finisher tries it blind (user instruction: that
+                // pill is what must be pressed on such screens).
+                val pts = arrayOf(
+                    0.927 to 0.064, 0.158 to 0.062, 0.898 to 0.064, 0.942 to 0.061
+                )
                 val p = pts[sweepCount]
                 sweepCount++
-                tap(p.first, p.second, "最終手段：右上の×候補$sweepCount")
-            } else if (sweepCount >= 3 && now() - lastSweepAt > 8000) {
+                if (sweepCount == 2) {
+                    tap(p.first, p.second, "最終手段：左上の「ストアを開く」候補")
+                } else {
+                    tap(p.first, p.second, "最終手段：右上の×候補$sweepCount")
+                }
+            } else if (sweepCount >= 4 && now() - lastSweepAt > 8000) {
                 endSession("最終手段の×でも閉じられませんでした（手動で閉じてください）")
                 return
             }
@@ -1218,9 +1241,9 @@ class AdCloserService : AccessibilityService() {
         // for them usually means an ad no pattern recognised, not
         // a closed ad (the lamp-creative incident, 2026-11-13).
         if (noAdSignalSince == 0L) noAdSignalSince = now()
-        val deathMs = if (sessionTapped && !finisherActive) 4_000 else 30_000
+        val deathMs = if (sessionTapped && !finisherActive && !funnelSeen) 4_000 else 30_000
         if (now() - noAdSignalSince > deathMs) {
-            if (!sessionTapped) {
+            if (!sessionTapped || funnelSeen) {
                 // Leave evidence: what the unrecognised screen
                 // actually exposed, for the next diagnosis.
                 val texts = snap.texts.take(8).joinToString(" / ") { it.take(20) }
