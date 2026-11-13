@@ -140,6 +140,10 @@ class AdCloserService : AccessibilityService() {
     private var currentPkg: String = ""
     private var lastRecordedForeign = ""
     private var lastSpeedTapAt = 0L
+    // v2.11: panel-evacuation throttle for farming, and the x2
+    // keeper's "missing since" stability timer.
+    private var lastFarmNudgeAt = 0L
+    private var x2MissingSince = 0L
     // When the last session ended in failure (v2.5 excursion watch).
     private var lastFailedSessionAt = 0L
 
@@ -1371,6 +1375,9 @@ class AdCloserService : AccessibilityService() {
     private var farmSuppressed = ""
 
     private fun farmAct(sig: String, fingerprint: String, action: () -> Unit) {
+        // A known screen means the battle view is interrupted: the
+        // x2 keeper's stability timer starts over afterwards.
+        x2MissingSince = 0L
         if (fingerprint == farmSuppressed) return
         val t = now()
         if (fingerprint == farmFingerprint && t - farmSigWindowStart < 60_000) {
@@ -1491,13 +1498,46 @@ class AdCloserService : AccessibilityService() {
             return
         }
 
+        // If our own floating panel covers the roulette 確認 zone,
+        // ask it to move BEFORE judging the screen (v2.11): the
+        // screenshot includes the panel, so a covered button reads
+        // as "not a roulette screen" and no tap is ever attempted —
+        // the v2.7 tap guard never gets its chance. The user's
+        // 2026-11-13 screenshot measured this exactly: lime share
+        // 0.28 over the full button (panel on its right half) versus
+        // 0.55 over the left half alone.
+        val panelRectNow = Control.panelRect
+        if (panelRectNow != null && now() - lastFarmNudgeAt > 5_000 &&
+            panelRectNow.contains(
+                (screenW() * 0.717).toInt(), (screenH() * 0.623).toInt()
+            )
+        ) {
+            lastFarmNudgeAt = now()
+            Control.blockedTapFx = 0.717f
+            Control.blockedTapFy = 0.623f
+            Control.panelNudgeAt = now()
+            LogStore.add(this, "周回：パネルが「確認」ボタンに重なっていたため退避します")
+        }
+
         // ルーレット: green 確認 + orange AD リフレッシュ pair at y ~ 62%.
-        val rConfirm = fractionWhere(bmp, 0.545, 0.89, 0.595, 0.652) { h ->
-            h[0] in 60f..106f && h[1] > 0.45f && h[2] > 0.55f
-        }
-        val rRefresh = fractionWhere(bmp, 0.11, 0.46, 0.595, 0.652) { h ->
-            h[0] in 15f..47f && h[1] > 0.5f && h[2] > 0.5f
-        }
+        // v2.11: each button is ALSO sampled on a partial strip, so a
+        // panel parked over one end cannot hide the whole button.
+        val rConfirm = maxOf(
+            fractionWhere(bmp, 0.545, 0.89, 0.595, 0.652) { h ->
+                h[0] in 60f..106f && h[1] > 0.45f && h[2] > 0.55f
+            },
+            fractionWhere(bmp, 0.545, 0.73, 0.595, 0.652) { h ->
+                h[0] in 60f..106f && h[1] > 0.45f && h[2] > 0.55f
+            }
+        )
+        val rRefresh = maxOf(
+            fractionWhere(bmp, 0.11, 0.46, 0.595, 0.652) { h ->
+                h[0] in 15f..47f && h[1] > 0.5f && h[2] > 0.5f
+            },
+            fractionWhere(bmp, 0.27, 0.46, 0.595, 0.652) { h ->
+                h[0] in 15f..47f && h[1] > 0.5f && h[2] > 0.5f
+            }
+        )
         if (rConfirm > 0.5 && rRefresh > 0.4) {
             // v2.6 (user correction 2026-11-12): NEVER tap the スキップ
             // checkbox. The v1.3 skip-first logic was wrong — what
@@ -1528,9 +1568,26 @@ class AdCloserService : AccessibilityService() {
                 val x2Warm = fractionWhere(bmp, 0.05, 0.125, 0.24, 0.275) { h ->
                     h[0] in 18f..58f && h[1] > 0.35f && h[2] > 0.20f
                 }
-                if (x2Warm < 0.03 && now() - lastSpeedTapAt > 20_000) {
-                    lastSpeedTapAt = now()
-                    tap(0.082, 0.21, "周回：敵の移動速度アイコン（×2化）")
+                // v2.11: a single "no x2" reading is not enough. The
+                // user's 2026-11-13 log showed a speed tap after
+                // nearly every card pick — the frames right after a
+                // panel closes are transition frames where the HUD
+                // (and its x2 glyph) is still fading in, so the strip
+                // reads empty even though x2 is on; the tap then
+                // toggles the speed back DOWN and the cycle repeats.
+                // Require the empty reading to hold for 3 continuous
+                // seconds of battle frames before tapping.
+                if (x2Warm >= 0.03) {
+                    x2MissingSince = 0L
+                } else {
+                    if (x2MissingSince == 0L) x2MissingSince = now()
+                    if (now() - x2MissingSince >= 3_000 &&
+                        now() - lastSpeedTapAt > 20_000
+                    ) {
+                        lastSpeedTapAt = now()
+                        x2MissingSince = 0L
+                        tap(0.082, 0.21, "周回：敵の移動速度アイコン（×2化）")
+                    }
                 }
             }
         }
