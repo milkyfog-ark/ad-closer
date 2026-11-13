@@ -145,6 +145,13 @@ class AdCloserService : AccessibilityService() {
     // v2.24: pattern-C pill taps by real bounds (see handleGame).
     private var cPillTaps = 0
     private var lastCPillTapAt = 0L
+    // v2.25: after any store/excursion return, the end-card branch
+    // stays quiet for a while (the ad resumes playing on return;
+    // tapping at once reopens the store — the 2026-11-14 loop).
+    private var postReturnQuietUntil = 0L
+    // v2.25: end-card branch meter tracking (parked-meter escape).
+    private var ecMeterVal = -1f
+    private var ecMeterStuckSince = 0L
     private var lastEventClass = ""
     // Pattern E state (v1.5, from the user's TikTok-card screenshots on
     // 2026-11-12): an end card whose only corner control is first a ">>"
@@ -448,6 +455,9 @@ class AdCloserService : AccessibilityService() {
         recentsArmed = false
         cPillTaps = 0
         lastCPillTapAt = 0L
+        postReturnQuietUntil = 0L
+        ecMeterVal = -1f
+        ecMeterStuckSince = 0L
         eStage = 0
         eTapCount = 0
         lastETapAt = 0L
@@ -654,6 +664,7 @@ class AdCloserService : AccessibilityService() {
                         recentsArmed = false
                         bookReturn()
                     }
+                    postReturnQuietUntil = now() + 15_000
                     noAdSignalSince = 0L
                     if (eStage == 1) eStage = 2
                     LogStore.add(this, "対象アプリに戻りました。×の出現を待ちます")
@@ -661,6 +672,7 @@ class AdCloserService : AccessibilityService() {
                 if (returningFromExcursion) {
                     // Back from the advertiser's app (pattern E).
                     returningFromExcursion = false
+                    postReturnQuietUntil = now() + 15_000
                     noAdSignalSince = 0L
                     if (eStage == 1) {
                         eStage = 2
@@ -1201,6 +1213,33 @@ class AdCloserService : AccessibilityService() {
             if (Prefs.patternB(this)) {
                 val elapsedSec = (now() - adStartAt) / 1000
                 if (elapsedSec >= Prefs.guardSeconds(this)) {
+                    // v2.25 veto (a): just back from the store or
+                    // an advertiser app — the ad resumes playing,
+                    // and tapping again at once reopens the store
+                    // (the 2026-11-14 loop; user: "戻っても待たない
+                    // ですぐ押すから延々ループした").
+                    if (now() < postReturnQuietUntil) return
+                    // v2.25 veto (b): a progress meter is still
+                    // running — the VIDEO has not finished, no
+                    // matter what texts it exposes. The FREECASH
+                    // video shows "Google Play"/install texts and
+                    // a bottom-left seconds countdown from the
+                    // first frame; tapping during the countdown
+                    // leaves for the store mid-ad (user
+                    // observation 2026-11-14). Escape hatch: a
+                    // meter parked unchanged for 20s counts as
+                    // finished (the pattern-F lesson).
+                    val mp = snap.maxProgress
+                    if (mp > 0f && mp < 0.99f) {
+                        if (ecMeterVal < 0f || mp - ecMeterVal > 0.005f) {
+                            ecMeterVal = mp
+                            ecMeterStuckSince = now()
+                        }
+                        if (now() - ecMeterStuckSince < 20_000) return
+                    } else {
+                        ecMeterVal = -1f
+                        ecMeterStuckSince = 0L
+                    }
                     // Pattern C proper (v2.24): if a "Google Play"
                     // pill is on screen in the top-left, press the
                     // pill ITSELF — the centre of its real bounds —
