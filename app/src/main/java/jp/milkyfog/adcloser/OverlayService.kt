@@ -103,6 +103,34 @@ class OverlayService : Service() {
         LogStore.add(this, "フローティングパネルを退避しました")
     }
 
+    /**
+     * Clamp a panel position (v2.36, user request 2026-11-14): the
+     * panel may be dragged off the screen edges to get it out of
+     * the game's way, but the drag grip ("≡ 移動") must never
+     * disappear — at least ~48dp of it stays visible horizontally,
+     * and its row (the header) always stays on screen vertically
+     * (never above the top; the panel may sink until only the
+     * header shows at the bottom). The automatic nudge still
+     * returns the panel fully on screen, so the emergency stop
+     * stays reachable after an evacuation. When the grip has not
+     * been measured yet, fall back to the old full-panel clamp.
+     */
+    private fun clampPanel(
+        x: Int, y: Int, screenW: Int, screenH: Int,
+        panelW: Int, panelH: Int, gripW: Int, headerH: Int
+    ): Pair<Int, Int> {
+        if (gripW <= 0 || headerH <= 0) {
+            return x.coerceIn(0, (screenW - panelW).coerceAtLeast(0)) to
+                y.coerceIn(0, (screenH - panelH).coerceAtLeast(0))
+        }
+        val keep = (48 * resources.displayMetrics.density).toInt()
+        val gripLeft = 6 // layout padding-left (px); the grip starts there
+        val minX = keep - gripLeft - gripW
+        val maxX = screenW - gripLeft - keep
+        val maxY = (screenH - headerH).coerceAtLeast(0)
+        return x.coerceIn(minX, maxX) to y.coerceIn(0, maxY)
+    }
+
     private fun farmLabel(): String =
         if (Prefs.farm(this)) "周回停止" else "周回開始"
 
@@ -253,8 +281,13 @@ class OverlayService : Service() {
             val screenW = resources.displayMetrics.widthPixels
             val screenH = resources.displayMetrics.heightPixels
             if (prefs.contains("x") && prefs.contains("y")) {
-                lp.x = prefs.getInt("x", 0).coerceIn(0, screenW - layout.width)
-                lp.y = prefs.getInt("y", 0).coerceIn(0, screenH - layout.height)
+                val clamped = clampPanel(
+                    prefs.getInt("x", 0), prefs.getInt("y", 0),
+                    screenW, screenH,
+                    layout.width, layout.height, grip.width, header.height
+                )
+                lp.x = clamped.first
+                lp.y = clamped.second
             } else {
                 lp.x = screenW - layout.width - 8
                 lp.y = screenH / 2 - layout.height / 2
@@ -279,10 +312,14 @@ class OverlayService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val screenW = resources.displayMetrics.widthPixels
                     val screenH = resources.displayMetrics.heightPixels
-                    lp.x = (startX + (ev.rawX - downRawX).toInt())
-                        .coerceIn(0, screenW - layout.width)
-                    lp.y = (startY + (ev.rawY - downRawY).toInt())
-                        .coerceIn(0, screenH - layout.height)
+                    val clamped = clampPanel(
+                        startX + (ev.rawX - downRawX).toInt(),
+                        startY + (ev.rawY - downRawY).toInt(),
+                        screenW, screenH,
+                        layout.width, layout.height, grip.width, header.height
+                    )
+                    lp.x = clamped.first
+                    lp.y = clamped.second
                     runCatching { wm.updateViewLayout(layout, lp) }
                     true
                 }
