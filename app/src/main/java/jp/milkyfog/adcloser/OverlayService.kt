@@ -39,6 +39,10 @@ class OverlayService : Service() {
     private var windowManager: WindowManager? = null
     private var rootView: LinearLayout? = null
     private var params: WindowManager.LayoutParams? = null
+    // v2.53 experiment state (hide overlays while clicking).
+    private var overlayHidden = false
+    private var hideStartedAt = 0L
+    private var markerWasVisible = false
     private var armButton: Button? = null
     private var farmButton: Button? = null
     private var targetButton: Button? = null
@@ -69,6 +73,21 @@ class OverlayService : Service() {
     private var consumedNudgeAt = 0L
     private val labelRefresh = object : Runnable {
         override fun run() {
+            // v2.53 experiment: hide both overlay windows while
+            // the clicker runs (see Prefs.clickerHideOverlay).
+            if (!overlayHidden && Control.clickerOn &&
+                Prefs.clickerHideOverlay(this@OverlayService) &&
+                Control.clickerStartedAt > 0 &&
+                android.os.SystemClock.elapsedRealtime() - Control.clickerStartedAt > 1000
+            ) {
+                hideOverlaysForExperiment()
+            }
+            if (overlayHidden &&
+                (!Control.clickerOn ||
+                    android.os.SystemClock.elapsedRealtime() - hideStartedAt > 60_000)
+            ) {
+                restoreOverlays()
+            }
             farmButton?.text = farmLabel()
             syncClickerUi()
             applyPanelVisibility()
@@ -212,6 +231,10 @@ class OverlayService : Service() {
     }
 
     private fun publishPanelRect() {
+        if (overlayHidden) {
+            Control.panelRect = null
+            return
+        }
         val view = rootView ?: return
         val lp = params ?: return
         if (view.width > 0 && view.height > 0) {
@@ -227,6 +250,37 @@ class OverlayService : Service() {
      * that still covers the point (point near the top), uses the
      * bottom corner on the opposite side instead.
      */
+    /**
+     * v2.53 experiment: remove BOTH overlay windows while the
+     * clicker runs, so touches delivered to the game are not
+     * marked "obscured by another app's window" (a flag the
+     * receiving app can use to drop touches). Restored by
+     * labelRefresh when the clicker stops or after 60s.
+     */
+    private fun hideOverlaysForExperiment() {
+        val wm = windowManager ?: return
+        val view = rootView ?: return
+        overlayHidden = true
+        hideStartedAt = android.os.SystemClock.elapsedRealtime()
+        markerWasVisible = targetView != null
+        if (markerWasVisible) hideTarget()
+        runCatching { wm.removeView(view) }
+        Control.panelRect = null
+        LogStore.add(this, "実験：連打中はパネルとマトを隠します（最大60秒で自動復帰）")
+    }
+
+    private fun restoreOverlays() {
+        val wm = windowManager ?: return
+        val view = rootView ?: return
+        overlayHidden = false
+        runCatching { wm.addView(view, params) }
+        if (markerWasVisible) {
+            markerWasVisible = false
+            showTarget()
+        }
+        LogStore.add(this, "実験：パネルを戻しました")
+    }
+
     private fun nudgePanel() {
         val wm = windowManager ?: return
         val view = rootView ?: return

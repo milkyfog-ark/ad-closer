@@ -99,6 +99,18 @@ object Prefs {
     fun setClickerHumanTap(ctx: Context, v: Boolean) =
         sp(ctx).edit().putBoolean("clicker_human_tap", v).apply()
     /**
+     * Hide-overlays experiment (v2.53): while the clicker runs,
+     * remove BOTH overlay windows (panel + marker) for up to
+     * 60s, so no touch delivered to the game is marked
+     * "obscured by another app's window". Tests the user's
+     * report that clicking worked before the floating-window
+     * changes and stopped after.
+     */
+    fun clickerHideOverlay(ctx: Context): Boolean =
+        sp(ctx).getBoolean("clicker_hide_overlay", false)
+    fun setClickerHideOverlay(ctx: Context, v: Boolean) =
+        sp(ctx).edit().putBoolean("clicker_hide_overlay", v).apply()
+    /**
      * Which rows the floating panel shows (v2.46, user request
      * 2026-11-15: the panel is too big — hide the rows for the
      * features not in use right now). 「全停止」 is not switchable;

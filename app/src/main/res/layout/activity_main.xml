@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v2.52）"
+            android:text="広告クローザー（試作 v2.53）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -218,6 +218,14 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="指に近いタップ（実験：微小な動きと位置のばらつきを付ける）"
+            android:textSize="15sp" />
+
+        <Switch
+            android:id="@+id/swClickerHide"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="連打中はパネルとマトを隠す（実験：開始後最大60秒）"
             android:textSize="15sp" />
 
         <TextView
