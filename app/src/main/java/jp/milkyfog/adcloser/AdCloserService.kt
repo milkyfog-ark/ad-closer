@@ -295,6 +295,70 @@ class AdCloserService : AccessibilityService() {
             boundsByText.entries.firstOrNull { it.key.contains(text) }?.value
     }
 
+    // v2.51 diagnostic (user-approved investigation, 2026-11-15):
+    // ログウィズ's buttons ignore our injected taps while other
+    // apps/elements accept them. One candidate mechanism is the
+    // game checking the accessibility flag on MotionEvents for
+    // its money-related buttons. To choose the next step we need
+    // to know what the foreground window is MADE OF: if it is
+    // real Android views, a node ACTION_CLICK (no touch
+    // injection at all) may work; if it is a single canvas node,
+    // injection is the only door. Logs the node census (count,
+    // clickable count, class histogram) plus the clickable
+    // nodes' labels/positions whenever the census changes
+    // (or every 30s) while a target app is in front.
+    private var lastCensusKey = ""
+    private var lastCensusAt = 0L
+
+    private fun logWindowCensus(root: AccessibilityNodeInfo, pkg: String) {
+        var count = 0
+        var clickable = 0
+        var withText = 0
+        val classes = HashMap<String, Int>()
+        val clickables = ArrayList<String>()
+        val stack = ArrayDeque<AccessibilityNodeInfo>()
+        stack.add(root)
+        val sw = screenW().coerceAtLeast(1)
+        val sh = screenH().coerceAtLeast(1)
+        while (stack.isNotEmpty() && count < 2000) {
+            val n = stack.removeLast()
+            count++
+            val cn = n.className?.toString()?.substringAfterLast('.') ?: "?"
+            classes[cn] = (classes[cn] ?: 0) + 1
+            val label = n.text?.toString() ?: n.contentDescription?.toString()
+            if (!label.isNullOrEmpty()) withText++
+            if (n.isClickable) {
+                clickable++
+                if (clickables.size < 10) {
+                    val r = Rect()
+                    n.getBoundsInScreen(r)
+                    val cx = (r.left + r.right) / 2 * 100 / sw
+                    val cy = (r.top + r.bottom) / 2 * 100 / sh
+                    val lab = label?.take(12) ?: ""
+                    clickables.add("$cn「$lab」($cx%,$cy%)")
+                }
+            }
+            for (i in 0 until n.childCount) {
+                n.getChild(i)?.let { stack.add(it) }
+            }
+        }
+        val top = classes.entries.sortedByDescending { it.value }.take(4)
+            .joinToString(", ") { "${it.key}×${it.value}" }
+        val key = "$pkg|$count|$clickable|$top|${clickables.joinToString("/")}"
+        val t = now()
+        if (key != lastCensusKey || t - lastCensusAt > 30_000) {
+            lastCensusKey = key
+            lastCensusAt = t
+            LogStore.add(
+                this,
+                "診断：画面構成 部品$count（クリック可$clickable、文字あり$withText）: $top"
+            )
+            if (clickables.isNotEmpty()) {
+                LogStore.add(this, "診断：クリック可能な部品: " + clickables.joinToString("、"))
+            }
+        }
+    }
+
     private fun snapshot(root: AccessibilityNodeInfo): Snap {
         val texts = ArrayList<String>()
         val bounds = HashMap<String, Rect>()
@@ -802,6 +866,7 @@ class AdCloserService : AccessibilityService() {
                     }
                     LogStore.add(this, "広告主アプリから対象アプリに戻りました")
                 }
+                logWindowCensus(root, pkg)
                 handleGame(snap)
                 if (pkg == GAME_PKG) maybeFarmTick()
             }
