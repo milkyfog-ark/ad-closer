@@ -88,6 +88,21 @@ object Prefs {
     fun clickerPressMs(ctx: Context): Int = sp(ctx).getInt("clicker_press_ms", 30)
     fun setClickerPressMs(ctx: Context, v: Int) =
         sp(ctx).edit().putInt("clicker_press_ms", v).apply()
+    /**
+     * Which rows the floating panel shows (v2.46, user request
+     * 2026-11-15: the panel is too big — hide the rows for the
+     * features not in use right now). 「全停止」 is not switchable;
+     * it stays as the emergency brake.
+     */
+    fun panelShowAd(ctx: Context): Boolean = sp(ctx).getBoolean("panel_show_ad", true)
+    fun setPanelShowAd(ctx: Context, v: Boolean) =
+        sp(ctx).edit().putBoolean("panel_show_ad", v).apply()
+    fun panelShowFarm(ctx: Context): Boolean = sp(ctx).getBoolean("panel_show_farm", true)
+    fun setPanelShowFarm(ctx: Context, v: Boolean) =
+        sp(ctx).edit().putBoolean("panel_show_farm", v).apply()
+    fun panelShowClicker(ctx: Context): Boolean = sp(ctx).getBoolean("panel_show_clicker", true)
+    fun setPanelShowClicker(ctx: Context, v: Boolean) =
+        sp(ctx).edit().putBoolean("panel_show_clicker", v).apply()
     /** Target position as screen fractions (the marker's centre). */
     fun clickerX(ctx: Context): Float = sp(ctx).getFloat("clicker_x", 0.5f)
     fun clickerY(ctx: Context): Float = sp(ctx).getFloat("clicker_y", 0.5f)

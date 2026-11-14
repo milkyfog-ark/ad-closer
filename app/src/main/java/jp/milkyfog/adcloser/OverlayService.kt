@@ -50,6 +50,7 @@ class OverlayService : Service() {
         override fun run() {
             farmButton?.text = farmLabel()
             syncClickerUi()
+            applyPanelVisibility()
             publishPanelRect()
             if (Control.panelNudgeAt != consumedNudgeAt) {
                 consumedNudgeAt = Control.panelNudgeAt
@@ -61,6 +62,24 @@ class OverlayService : Service() {
 
     /** Keep the accessibility service aware of where the panel is, so
      *  its taps never land on the panel itself (v2.7). */
+    /**
+     * v2.46: show only the panel rows the user keeps enabled in
+     * the main screen's settings (the panel was too big). Applied
+     * every second from labelRefresh, so changes take effect
+     * while the panel is open. 「全停止」 has no setting and is
+     * always shown: it is the emergency brake.
+     */
+    private fun applyPanelVisibility() {
+        armButton?.visibility =
+            if (Prefs.panelShowAd(this)) View.VISIBLE else View.GONE
+        farmButton?.visibility =
+            if (Prefs.panelShowFarm(this)) View.VISIBLE else View.GONE
+        val clickerVis =
+            if (Prefs.panelShowClicker(this)) View.VISIBLE else View.GONE
+        targetButton?.visibility = clickerVis
+        clickButton?.visibility = clickerVis
+    }
+
     private fun publishPanelRect() {
         val view = rootView ?: return
         val lp = params ?: return

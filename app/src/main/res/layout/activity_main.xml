@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v2.45）"
+            android:text="広告クローザー（試作 v2.46）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -97,6 +97,41 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="近道：直前に使っていたアプリを追加" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="フローティングボタンの表示"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="14sp"
+            android:text="使う機能の行だけを表示すると、フローティングボタンが小さくなります。「全停止」は緊急停止用に常時表示します。なお、広告を閉じる動作そのものはこの表示と関係なく動きます（止めたいときは上の「全体オン」と「常駐」から）。" />
+
+        <Switch
+            android:id="@+id/swPanelAd"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="「広告開始」の行を表示" />
+
+        <Switch
+            android:id="@+id/swPanelFarm"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="「周回開始／停止」の行を表示" />
+
+        <Switch
+            android:id="@+id/swPanelClicker"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="「連打」の行を表示（場所指定と開始／終了）" />
 
         <TextView
             android:layout_width="wrap_content"
