@@ -668,6 +668,7 @@ class AdCloserService : AccessibilityService() {
     private var clickerGuardSkipLogged = false
     private var clickerPanelSkipLogged = false
     private var clickerShizukuWarnLogged = false
+    private var clickerBindWaits = 0
 
     // Until this time the clicker must not dispatch: another gesture
     // (farm / ad closing) is in flight, and a clicker tap landing
@@ -695,6 +696,25 @@ class AdCloserService : AccessibilityService() {
                 clickerLoopRunning = false
                 LogStore.add(this@AdCloserService, "オートクリッカー：設定時間になったため自動停止しました")
                 return
+            }
+            // v2.57: in Shizuku mode, wait for the user service
+            // to finish binding before dispatching beats. The
+            // bind is asynchronous (~1–2 s), and beats sent
+            // meanwhile fall back to accessibility gestures —
+            // which games like ログウィズ ignore entirely, so a
+            // run looked broken at its start (user log
+            // 2026-11-15 04:52). Wait up to ~2.5 s per outage;
+            // if it never connects, the tap path logs its
+            // one-time warning and the run continues gesturing.
+            if (Prefs.clickerShizuku(this@AdCloserService)) {
+                if (ShizukuTap.connected()) {
+                    clickerBindWaits = 0
+                } else if (clickerBindWaits < 25) {
+                    ShizukuTap.ensureBound(this@AdCloserService)
+                    clickerBindWaits++
+                    clickerHandler.postDelayed(this, 100)
+                    return
+                }
             }
             if (now() < gestureGuardUntil) {
                 // Another gesture is in flight; skip this beat rather
@@ -843,6 +863,7 @@ class AdCloserService : AccessibilityService() {
             clickerGuardSkipLogged = false
             clickerPanelSkipLogged = false
             clickerShizukuWarnLogged = false
+            clickerBindWaits = 0
             if (Prefs.clickerShizuku(this)) ShizukuTap.ensureBound(this)
             clickerHandler.post(clickerRunnable)
             LogStore.add(

@@ -41,6 +41,9 @@ class OverlayService : Service() {
     private var params: WindowManager.LayoutParams? = null
     // v2.53 experiment state (hide overlays while clicking).
     private var overlayHidden = false
+
+    // v2.57: the icon mode the panel style was last applied for.
+    private var appliedIconMode: Boolean? = null
     private var hideStartedAt = 0L
     private var markerWasVisible = false
     // v2.54: the clicker run (clickerStartedAt) we already hid
@@ -95,10 +98,21 @@ class OverlayService : Service() {
             ) {
                 restoreOverlays()
             }
-            farmButton?.text = farmLabel()
+            val fl = farmLabel()
+            if (farmButton?.text?.toString() != fl) farmButton?.text = fl
             syncClickerUi()
             applyPanelVisibility()
-            applyPanelStyle()
+            // v2.57: applyPanelStyle reassigns every button's
+            // layout params, forcing a relayout of the whole
+            // panel; a tap straddling that relayout can be
+            // swallowed (the stop button felt like it needed
+            // mashing — user report 2026-11-15). Restyle only
+            // when the icon mode actually changed.
+            val iconNow = Prefs.panelIconMode(this@OverlayService)
+            if (appliedIconMode != iconNow) {
+                appliedIconMode = iconNow
+                applyPanelStyle()
+            }
             publishPanelRect()
             if (Control.panelNudgeAt != consumedNudgeAt) {
                 consumedNudgeAt = Control.panelNudgeAt
@@ -662,15 +676,23 @@ class OverlayService : Service() {
     private fun syncClickerUi() {
         val on = Control.clickerOn
         val icon = Prefs.panelIconMode(this)
-        clickButton?.text = if (icon) {
+        // v2.57: only touch the label when it actually changes —
+        // setText forces a relayout that can eat a live tap.
+        val clickLabel = if (icon) {
             if (on) "⏸" else "▷"
         } else {
             if (on) "連打終了" else "連打開始"
         }
-        targetButton?.text = if (icon) {
+        if (clickButton?.text?.toString() != clickLabel) {
+            clickButton?.text = clickLabel
+        }
+        val targetLabel = if (icon) {
             "◎"
         } else {
             if (targetView == null) "連打の場所指定" else "マトをしまう"
+        }
+        if (targetButton?.text?.toString() != targetLabel) {
+            targetButton?.text = targetLabel
         }
         val view = targetView ?: return
         val lp = targetParams ?: return

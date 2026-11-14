@@ -40,6 +40,9 @@ object ShizukuTap {
         false
     }
 
+    /** True when the user service is bound and callable. */
+    fun connected(): Boolean = service != null
+
     fun ensureBound(ctx: Context) {
         if (service != null || binding) return
         if (!ready()) return
@@ -71,6 +74,9 @@ object ShizukuTap {
             true
         } catch (t: Throwable) {
             service = null
+            // v2.57: allow an immediate rebind on the next beat
+            // instead of waiting out the bind-attempt throttle.
+            lastBindAttemptAt = 0L
             false
         }
     }
