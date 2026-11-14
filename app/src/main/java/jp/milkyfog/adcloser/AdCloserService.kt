@@ -669,6 +669,7 @@ class AdCloserService : AccessibilityService() {
     private var clickerPanelSkipLogged = false
     private var clickerShizukuWarnLogged = false
     private var clickerBindWaits = 0
+    private var clickerLastDiag: String? = null
 
     // Until this time the clicker must not dispatch: another gesture
     // (farm / ad closing) is in flight, and a clicker tap landing
@@ -770,6 +771,14 @@ class AdCloserService : AccessibilityService() {
                             "オートクリッカー：クリックを送信しました（${sBeat}回目、" +
                                 "${(fx * 100).toInt()}%、${(fy * 100).toInt()}%、Shizuku）"
                         )
+                        val d = ShizukuTap.diag()
+                        if (d != null && d != clickerLastDiag) {
+                            clickerLastDiag = d
+                            LogStore.add(
+                                this@AdCloserService,
+                                "Shizuku診断：$d"
+                            )
+                        }
                     }
                     clickerHandler.postDelayed(this, nextClickerDelayMs())
                     return
@@ -864,6 +873,7 @@ class AdCloserService : AccessibilityService() {
             clickerPanelSkipLogged = false
             clickerShizukuWarnLogged = false
             clickerBindWaits = 0
+            clickerLastDiag = null
             if (Prefs.clickerShizuku(this)) ShizukuTap.ensureBound(this)
             clickerHandler.post(clickerRunnable)
             LogStore.add(

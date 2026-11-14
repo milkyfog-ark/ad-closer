@@ -7,5 +7,6 @@ interface IShizukuTap {
     // The aidl compiler requires ids on ALL methods or none;
     // destroy keeps Shizuku's conventional id.
     void tap(int x, int y, int durationMs) = 1;
+    String diag() = 2;
     void destroy() = 16777114;
 }

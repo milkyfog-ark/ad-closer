@@ -43,6 +43,17 @@ object ShizukuTap {
     /** True when the user service is bound and callable. */
     fun connected(): Boolean = service != null
 
+    /**
+     * Diagnostic from the user service (v2.59): which
+     * injection path the last tap took and whether the
+     * system accepted it.
+     */
+    fun diag(): String? = try {
+        service?.diag()
+    } catch (t: Throwable) {
+        null
+    }
+
     fun ensureBound(ctx: Context) {
         if (service != null || binding) return
         if (!ready()) return
