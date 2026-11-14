@@ -658,6 +658,7 @@ class AdCloserService : AccessibilityService() {
     private val clickerRng = java.util.Random()
     private var clickerGuardSkipLogged = false
     private var clickerPanelSkipLogged = false
+    private var clickerShizukuWarnLogged = false
 
     // Until this time the clicker must not dispatch: another gesture
     // (farm / ad closing) is in flight, and a clicker tap landing
@@ -720,6 +721,38 @@ class AdCloserService : AccessibilityService() {
             val fy = Prefs.clickerY(this@AdCloserService).toDouble()
             val x = (screenW() * fx).toFloat()
             val y = (screenH() * fy).toFloat()
+            // v2.55: Shizuku engine. When enabled, the tap is
+            // injected with shell identity (no accessibility
+            // mark) — the only route that reaches games like
+            // ログウィズ that discard marked touches. The call
+            // is synchronous and returns after the press; on any
+            // failure we fall through to the gesture below.
+            if (Prefs.clickerShizuku(this@AdCloserService)) {
+                if (ShizukuTap.tap(
+                        this@AdCloserService, x.toInt(), y.toInt(),
+                        Prefs.clickerPressMs(this@AdCloserService)
+                    )
+                ) {
+                    clickerBeats++
+                    val sBeat = clickerBeats
+                    if (sBeat == 1 || sBeat % 20 == 0) {
+                        LogStore.add(
+                            this@AdCloserService,
+                            "オートクリッカー：クリックを送信しました（${sBeat}回目、" +
+                                "${(fx * 100).toInt()}%、${(fy * 100).toInt()}%、Shizuku）"
+                        )
+                    }
+                    handler.postDelayed(this, nextClickerDelayMs())
+                    return
+                }
+                if (!clickerShizukuWarnLogged) {
+                    clickerShizukuWarnLogged = true
+                    LogStore.add(
+                        this@AdCloserService,
+                        "Shizukuに接続できないため、通常方式でタップしています（Shizukuの起動と権限を確認してください）"
+                    )
+                }
+            }
             // v2.52 experiment (finger-like tap): a real finger
             // never produces a perfectly static, pixel-identical
             // touch — it lands within a few px of the aim and
@@ -800,11 +833,17 @@ class AdCloserService : AccessibilityService() {
             clickerBeats = 0
             clickerGuardSkipLogged = false
             clickerPanelSkipLogged = false
+            clickerShizukuWarnLogged = false
+            if (Prefs.clickerShizuku(this)) ShizukuTap.ensureBound(this)
             handler.post(clickerRunnable)
             LogStore.add(
                 this,
                 "オートクリッカーを開始しました（1回押す長さ ${Prefs.clickerPressMs(this)} ms）" +
-                    if (Prefs.clickerHumanTap(this)) "（指タップ実験ON）" else ""
+                    when {
+                        Prefs.clickerShizuku(this) -> "（Shizuku方式）"
+                        Prefs.clickerHumanTap(this) -> "（指タップ実験ON）"
+                        else -> ""
+                    }
             )
         } else if (!Control.clickerOn && clickerLoopRunning) {
             clickerLoopRunning = false

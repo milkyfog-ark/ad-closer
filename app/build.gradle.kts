@@ -29,8 +29,8 @@ android {
         applicationId = "jp.milkyfog.adcloser"
         minSdk = 26
         targetSdk = 34
-        versionCode = 75
-        versionName = "2.54.0"
+        versionCode = 76
+        versionName = "2.55.0"
     }
 
     signingConfigs {
@@ -52,6 +52,10 @@ android {
             signingConfig = signingConfigs.getByName("fixed")
         }
     }
+    buildFeatures {
+        // AIDL for the Shizuku user service interface (v2.55).
+        aidl = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -59,4 +63,10 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+dependencies {
+    // Shizuku (v2.55): shell-level tap injection for the clicker.
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v2.54）"
+            android:text="広告クローザー（試作 v2.55）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -227,6 +227,41 @@
             android:layout_marginTop="8dp"
             android:text="連打中はパネルとマトを隠す（実験：開始後最大60秒）"
             android:textSize="15sp" />
+
+        <Switch
+            android:id="@+id/swClickerShizuku"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Shizuku方式でタップ（実験：印なしの入力。ログウィズ等に必要）"
+            android:textSize="15sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="Shizuku連携（実験）"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="通常の連打は「アクセシビリティ経由」という印付きのタップで、一部のゲームはそれを無視します。Shizuku（無料アプリ）を使うと印なしでタップできます。Shizukuは端末の再起動のたびに、Shizukuアプリから起動し直す必要があります。"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/shizukuStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/btnShizuku"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Shizukuの権限をリクエスト" />
 
         <TextView
             android:id="@+id/guardLabel"

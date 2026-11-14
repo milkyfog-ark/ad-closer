@@ -111,6 +111,16 @@ object Prefs {
     fun setClickerHideOverlay(ctx: Context, v: Boolean) =
         sp(ctx).edit().putBoolean("clicker_hide_overlay", v).apply()
     /**
+     * Shizuku tap engine (v2.55): when on, the clicker injects
+     * taps through Shizuku (shell identity, no accessibility
+     * mark) instead of accessibility gestures. Falls back to
+     * gestures per-beat when Shizuku is unavailable.
+     */
+    fun clickerShizuku(ctx: Context): Boolean =
+        sp(ctx).getBoolean("clicker_shizuku", false)
+    fun setClickerShizuku(ctx: Context, v: Boolean) =
+        sp(ctx).edit().putBoolean("clicker_shizuku", v).apply()
+    /**
      * Which rows the floating panel shows (v2.46, user request
      * 2026-11-15: the panel is too big — hide the rows for the
      * features not in use right now). 「全停止」 is not switchable;

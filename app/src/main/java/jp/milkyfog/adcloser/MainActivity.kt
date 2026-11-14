@@ -77,6 +77,37 @@ class MainActivity : Activity() {
         bindSwitch(R.id.swPanelIcons, { Prefs.panelIconMode(this) }, { Prefs.setPanelIconMode(this, it) })
         bindSwitch(R.id.swClickerHuman, { Prefs.clickerHumanTap(this) }, { Prefs.setClickerHumanTap(this, it) })
         bindSwitch(R.id.swClickerHide, { Prefs.clickerHideOverlay(this) }, { Prefs.setClickerHideOverlay(this, it) })
+        bindSwitch(R.id.swClickerShizuku, { Prefs.clickerShizuku(this) }, { v ->
+            Prefs.setClickerShizuku(this, v)
+            if (v) ShizukuTap.ensureBound(this)
+        })
+        findViewById<Button>(R.id.btnShizuku).setOnClickListener {
+            try {
+                when {
+                    !rikka.shizuku.Shizuku.pingBinder() ->
+                        Toast.makeText(
+                            this,
+                            "Shizukuが起動していません。Shizukuアプリで起動してから押してください",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    rikka.shizuku.Shizuku.checkSelfPermission() ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED ->
+                        Toast.makeText(this, "すでに権限があります", Toast.LENGTH_SHORT).show()
+                    else -> rikka.shizuku.Shizuku.requestPermission(1001)
+                }
+            } catch (t: Throwable) {
+                Toast.makeText(this, "Shizukuに接続できませんでした", Toast.LENGTH_LONG).show()
+            }
+            refreshShizukuStatus()
+        }
+        try {
+            rikka.shizuku.Shizuku.addRequestPermissionResultListener { _, _ ->
+                refreshShizukuStatus()
+            }
+        } catch (t: Throwable) {
+            // Shizuku unavailable; the status line explains it.
+        }
+        refreshShizukuStatus()
 
         val seek = findViewById<SeekBar>(R.id.seekGuard)
         seek.progress = Prefs.guardSeconds(this) - 10
@@ -173,6 +204,35 @@ class MainActivity : Activity() {
         super.onResume()
         refreshStatus()
         refreshLog()
+        refreshShizukuStatus()
+    }
+
+    /** v2.55: Shizuku connection state, in plain words. */
+    private fun refreshShizukuStatus() {
+        val tv = findViewById<TextView>(R.id.shizukuStatus) ?: return
+        val installed = try {
+            packageManager.getPackageInfo("moe.shizuku.privileged.api", 0)
+            true
+        } catch (t: Throwable) {
+            false
+        }
+        tv.text = when {
+            !installed ->
+                "Shizuku状態：アプリがインストールされていません（Play ストアで「Shizuku」を入れてください）"
+            else -> try {
+                when {
+                    !rikka.shizuku.Shizuku.pingBinder() ->
+                        "Shizuku状態：インストール済みですが起動していません（Shizukuアプリで「ワイヤレスデバッグ経由で起動」してください）"
+                    rikka.shizuku.Shizuku.checkSelfPermission() ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED ->
+                        "Shizuku状態：使用できます（連打設定で「Shizuku方式でタップ」をONにしてください）"
+                    else ->
+                        "Shizuku状態：起動しています。下のボタンで権限を許可してください"
+                }
+            } catch (t: Throwable) {
+                "Shizuku状態：確認できませんでした"
+            }
+        }
     }
 
     private fun bindSwitch(id: Int, get: () -> Boolean, set: (Boolean) -> Unit) {
