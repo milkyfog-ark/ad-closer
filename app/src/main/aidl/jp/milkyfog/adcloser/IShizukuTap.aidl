@@ -4,6 +4,8 @@ package jp.milkyfog.adcloser;
 // Implemented by ShizukuTapService, which runs with shell
 // identity inside Shizuku's process space.
 interface IShizukuTap {
-    void tap(int x, int y, int durationMs);
+    // The aidl compiler requires ids on ALL methods or none;
+    // destroy keeps Shizuku's conventional id.
+    void tap(int x, int y, int durationMs) = 1;
     void destroy() = 16777114;
 }
