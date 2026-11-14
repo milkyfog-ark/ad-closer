@@ -45,6 +45,9 @@ class OverlayService : Service() {
     private var clickButton: Button? = null
     private var stopButton: Button? = null
     private var gripView: TextView? = null
+    private var closeButton: Button? = null
+    private var headerView: LinearLayout? = null
+    private var panelLayout: LinearLayout? = null
     // Platform-default button metrics, captured at build time so
     // icon mode (v2.47) can slim the buttons and text mode can
     // restore them exactly.
@@ -102,8 +105,42 @@ class OverlayService : Service() {
      * Buttons shrink to their glyph (minWidth 0, small padding);
      * text mode restores the captured platform defaults.
      */
+    /**
+     * v2.48: in icon mode the header's grip and close button
+     * leave their horizontal row and stack into the main column
+     * (grip above close), so the whole panel is one glyph wide
+     * (user request 2026-11-15). Text mode restores the row.
+     * Listeners live on the views themselves, so reparenting
+     * keeps dragging and closing intact.
+     */
+    private fun applyHeaderLayout(icon: Boolean) {
+        val header = headerView ?: return
+        val grip = gripView ?: return
+        val close = closeButton ?: return
+        val root = panelLayout ?: return
+        val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
+        if (icon) {
+            if (grip.parent === header) {
+                header.removeView(grip)
+                header.removeView(close)
+                root.addView(grip, 0, LinearLayout.LayoutParams(wrap, wrap))
+                root.addView(close, 1, LinearLayout.LayoutParams(wrap, wrap))
+                header.visibility = View.GONE
+            }
+        } else {
+            if (grip.parent === root) {
+                root.removeView(grip)
+                root.removeView(close)
+                header.addView(grip, 0, LinearLayout.LayoutParams(0, wrap, 1f))
+                header.addView(close, 1)
+                header.visibility = View.VISIBLE
+            }
+        }
+    }
+
     private fun applyPanelStyle() {
         val icon = Prefs.panelIconMode(this)
+        applyHeaderLayout(icon)
         gripView?.text = if (icon) "✥" else "≡ 移動"
         gripView?.textSize = if (icon) 16f else 12f
         stopButton?.text = if (icon) "⚠" else "全停止"
@@ -244,12 +281,14 @@ class OverlayService : Service() {
             setPadding(6, 4, 6, 6)
             setBackgroundColor(Color.argb(140, 30, 30, 40))
         }
+        panelLayout = layout
 
         // Header row: drag grip + close button.
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        headerView = header
         val grip = TextView(this).apply {
             text = "≡ 移動"
             setTextColor(Color.WHITE)
@@ -257,7 +296,7 @@ class OverlayService : Service() {
             setPadding(10, 6, 10, 6)
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val closeButton = Button(this).apply {
+        closeButton = Button(this).apply {
             text = "✕"
             minWidth = 0
             setPadding(14, 2, 14, 2)
