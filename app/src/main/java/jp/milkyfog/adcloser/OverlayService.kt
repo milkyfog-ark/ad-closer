@@ -263,11 +263,19 @@ class OverlayService : Service() {
         refreshHandler.post(labelRefresh)
         rootView = layout
 
+        // FLAG_LAYOUT_NO_LIMITS (v2.42): without it Android itself
+        // clips overlay windows to the display, no matter what x/y
+        // we set — v2.36 fixed only OUR clamp math, so the panel
+        // still stopped dead at the screen edge (user report
+        // 2026-11-14 23:50: "移動しても画面外に行かない"). With
+        // the flag, clampPanel() is the real bound: the grip can
+        // never be dragged out of reach.
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
