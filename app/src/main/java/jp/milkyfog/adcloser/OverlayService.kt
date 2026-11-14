@@ -530,7 +530,16 @@ class OverlayService : Service() {
         val lp = WindowManager.LayoutParams(
             size, size,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            // v2.50: FLAG_LAYOUT_NO_LIMITS — without it the
+            // marker window is laid out in a space shifted by the
+            // status bar (~24dp on the user's S20), so the saved
+            // centre came out ~3% of screen height BELOW the
+            // marker's visual centre and taps landed that much
+            // lower than aimed (the 引き直す button's bottom edge
+            // instead of its centre). The panel has carried this
+            // flag since v2.42; the marker never got it.
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.TOP or Gravity.START }
         val screenW = resources.displayMetrics.widthPixels
@@ -603,11 +612,16 @@ class OverlayService : Service() {
         }
         val view = targetView ?: return
         val lp = targetParams ?: return
+        // v2.50: FLAG_LAYOUT_NO_LIMITS must be reapplied here —
+        // this block replaces lp.flags wholesale and would
+        // otherwise strip it (see showTarget).
         val wantFlags = if (on) {
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         } else {
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         }
         if (lp.flags != wantFlags) {
             lp.flags = wantFlags
