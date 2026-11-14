@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -42,6 +43,17 @@ class OverlayService : Service() {
     private var farmButton: Button? = null
     private var targetButton: Button? = null
     private var clickButton: Button? = null
+    private var stopButton: Button? = null
+    private var gripView: TextView? = null
+    // Platform-default button metrics, captured at build time so
+    // icon mode (v2.47) can slim the buttons and text mode can
+    // restore them exactly.
+    private var defBtnTextSize = 0f
+    private var defBtnMinWidth = 0
+    private var defBtnPadH = 0
+    private var defBtnPadV = 0
+    private var defTextColor = 0
+    private var lastIconMode: Boolean? = null
     private var targetView: TargetView? = null
     private var targetParams: WindowManager.LayoutParams? = null
     private val refreshHandler = Handler(Looper.getMainLooper())
@@ -51,6 +63,7 @@ class OverlayService : Service() {
             farmButton?.text = farmLabel()
             syncClickerUi()
             applyPanelVisibility()
+            applyPanelStyle()
             publishPanelRect()
             if (Control.panelNudgeAt != consumedNudgeAt) {
                 consumedNudgeAt = Control.panelNudgeAt
@@ -78,6 +91,56 @@ class OverlayService : Service() {
             if (Prefs.panelShowClicker(this)) View.VISIBLE else View.GONE
         targetButton?.visibility = clickerVis
         clickButton?.visibility = clickerVis
+    }
+
+    /**
+     * v2.47: icon mode — symbol-only buttons in one slim column
+     * (user idea 2026-11-15). Glyphs: grip ✥, ad 🎞 (a green ● is
+     * appended while manually armed — emoji ignore text colour,
+     * so the state rides on the ●), farm 🔄/⏹ via farmLabel(),
+     * target ◎ and click ▷/⏸ via syncClickerUi(), all-stop ⚠.
+     * Buttons shrink to their glyph (minWidth 0, small padding);
+     * text mode restores the captured platform defaults.
+     */
+    private fun applyPanelStyle() {
+        val icon = Prefs.panelIconMode(this)
+        gripView?.text = if (icon) "✥" else "≡ 移動"
+        gripView?.textSize = if (icon) 16f else 12f
+        stopButton?.text = if (icon) "⚠" else "全停止"
+        if (icon) {
+            val armed = Control.manualArmAt != 0L
+            armButton?.text = if (armed) "🎞●" else "🎞"
+            armButton?.setTextColor(
+                if (armed) Color.rgb(0, 180, 0) else defTextColor
+            )
+        } else {
+            armButton?.setTextColor(defTextColor)
+            if (lastIconMode == true) {
+                // Back from icon mode: restore the arm label the
+                // text UI would be showing.
+                armButton?.text =
+                    if (Control.manualArmAt != 0L) "監視中…" else "広告開始"
+            }
+        }
+        lastIconMode = icon
+        val density = resources.displayMetrics.density
+        val padH = (8 * density).toInt()
+        val padV = (4 * density).toInt()
+        for (b in listOfNotNull(
+            armButton, farmButton, targetButton, clickButton, stopButton
+        )) {
+            if (icon) {
+                b.minWidth = 0
+                b.setPadding(padH, padV, padH, padV)
+                b.textSize = 18f
+            } else {
+                b.minWidth = defBtnMinWidth
+                b.setPadding(defBtnPadH, defBtnPadV, defBtnPadH, defBtnPadV)
+                if (defBtnTextSize > 0f) {
+                    b.setTextSize(TypedValue.COMPLEX_UNIT_PX, defBtnTextSize)
+                }
+            }
+        }
     }
 
     private fun publishPanelRect() {
@@ -151,7 +214,11 @@ class OverlayService : Service() {
     }
 
     private fun farmLabel(): String =
-        if (Prefs.farm(this)) "周回停止" else "周回開始"
+        if (Prefs.panelIconMode(this)) {
+            if (Prefs.farm(this)) "⏹" else "🔄"
+        } else {
+            if (Prefs.farm(this)) "周回停止" else "周回開始"
+        }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -199,6 +266,7 @@ class OverlayService : Service() {
                 stopSelf()
             }
         }
+        gripView = grip
         header.addView(grip)
         header.addView(closeButton)
         layout.addView(header)
@@ -208,9 +276,21 @@ class OverlayService : Service() {
             setOnClickListener {
                 Control.manualArmAt = SystemClock.elapsedRealtime()
                 Control.emergencySuspend = false
-                text = "監視中…"
+                if (Prefs.panelIconMode(this@OverlayService)) {
+                    text = "🎞●"
+                    setTextColor(Color.rgb(0, 180, 0))
+                } else {
+                    text = "監視中…"
+                }
                 LogStore.add(this@OverlayService, "フローティングボタンで手動開始")
             }
+        }
+        armButton?.let {
+            defBtnTextSize = it.textSize
+            defBtnMinWidth = it.minWidth
+            defBtnPadH = it.paddingLeft
+            defBtnPadV = it.paddingTop
+            defTextColor = it.currentTextColor
         }
         farmButton = Button(this).apply {
             text = farmLabel()
@@ -261,14 +341,16 @@ class OverlayService : Service() {
                 syncClickerUi()
             }
         }
-        val stopButton = Button(this).apply {
+        stopButton = Button(this).apply {
             text = "全停止"
             setOnClickListener {
                 Control.emergencySuspend = true
                 Control.manualArmAt = 0L
                 Control.clickerOn = false
                 Prefs.setFarm(this@OverlayService, false)
-                armButton?.text = "広告開始"
+                armButton?.text =
+                    if (Prefs.panelIconMode(this@OverlayService)) "🎞" else "広告開始"
+                armButton?.setTextColor(defTextColor)
                 farmButton?.text = farmLabel()
                 syncClickerUi()
                 LogStore.add(this@OverlayService, "フローティングボタンで全停止")
@@ -279,6 +361,7 @@ class OverlayService : Service() {
         layout.addView(targetButton)
         layout.addView(clickButton)
         layout.addView(stopButton)
+        applyPanelStyle()
         refreshHandler.post(labelRefresh)
         rootView = layout
 
@@ -431,8 +514,17 @@ class OverlayService : Service() {
      */
     private fun syncClickerUi() {
         val on = Control.clickerOn
-        clickButton?.text = if (on) "連打終了" else "連打開始"
-        targetButton?.text = if (targetView == null) "連打の場所指定" else "マトをしまう"
+        val icon = Prefs.panelIconMode(this)
+        clickButton?.text = if (icon) {
+            if (on) "⏸" else "▷"
+        } else {
+            if (on) "連打終了" else "連打開始"
+        }
+        targetButton?.text = if (icon) {
+            "◎"
+        } else {
+            if (targetView == null) "連打の場所指定" else "マトをしまう"
+        }
         val view = targetView ?: return
         val lp = targetParams ?: return
         val wantFlags = if (on) {

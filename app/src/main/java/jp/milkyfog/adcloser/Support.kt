@@ -103,6 +103,15 @@ object Prefs {
     fun panelShowClicker(ctx: Context): Boolean = sp(ctx).getBoolean("panel_show_clicker", true)
     fun setPanelShowClicker(ctx: Context, v: Boolean) =
         sp(ctx).edit().putBoolean("panel_show_clicker", v).apply()
+    /**
+     * Icon mode for the floating panel (v2.47, user idea
+     * 2026-11-15): symbol-only buttons in one slim column —
+     * grip ✥, close ✕, ad 🎞, farm 🔄/⏹, target ◎,
+     * click ▷/⏸, all-stop ⚠.
+     */
+    fun panelIconMode(ctx: Context): Boolean = sp(ctx).getBoolean("panel_icon_mode", false)
+    fun setPanelIconMode(ctx: Context, v: Boolean) =
+        sp(ctx).edit().putBoolean("panel_icon_mode", v).apply()
     /** Target position as screen fractions (the marker's centre). */
     fun clickerX(ctx: Context): Float = sp(ctx).getFloat("clicker_x", 0.5f)
     fun clickerY(ctx: Context): Float = sp(ctx).getFloat("clicker_y", 0.5f)

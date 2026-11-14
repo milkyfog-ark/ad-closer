@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v2.46）"
+            android:text="広告クローザー（試作 v2.47）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -132,6 +132,13 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="「連打」の行を表示（場所指定と開始／終了）" />
+
+        <Switch
+            android:id="@+id/swPanelIcons"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="記号モード（縦1列の細い表示にする）" />
 
         <TextView
             android:layout_width="wrap_content"
