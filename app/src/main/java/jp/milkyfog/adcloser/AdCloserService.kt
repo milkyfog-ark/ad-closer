@@ -1954,6 +1954,34 @@ class AdCloserService : AccessibilityService() {
         return "$r$g$b"
     }
 
+    /**
+     * Share of vivid-blue pixels in a card's icon box (v2.39).
+     * The capsule (錠剤) items carry a blue-and-white pill icon;
+     * measured on the user's 2026-11-14 screenshot with exactly
+     * this box (the iconSig box: cx±0.022, y 0.355–0.395): the
+     * two capsules read 0.31 / 0.22 and the angel icon between
+     * them 0.00, so a card counts as a capsule at >= 0.12. Other
+     * icon types (wing, bone, …) are not yet verified against
+     * this predicate, so every selection logs the three shares
+     * and the user can audit the calls from the log.
+     */
+    private fun capsuleShare(bmp: Bitmap, cx: Double): Double {
+        var hit = 0
+        var total = 0
+        var fx = cx - 0.022
+        while (fx <= cx + 0.022) {
+            var fy = 0.355
+            while (fy <= 0.395) {
+                val h = hsvOf(bmp, fx, fy)
+                if (h[0] in 190f..225f && h[1] > 0.4f && h[2] > 0.4f) hit++
+                total++
+                fy += 0.008
+            }
+            fx += 0.008
+        }
+        return if (total == 0) 0.0 else hit.toDouble() / total
+    }
+
     private fun cardRank(bmp: Bitmap, cx: Double): Int = cardRankShare(bmp, cx).first
 
     /**
@@ -2133,7 +2161,11 @@ class AdCloserService : AccessibilityService() {
                 val cs = doubleArrayOf(0.172, 0.495, 0.825)
                 IntArray(3) { cardRank(bmp, cs[it]) }.joinToString(",")
             } else "-"
-            diagLog("周回診断：banner=${"%.2f".format(banner)} ref=${"%.2f".format(ref)} ranks=[$rk]")
+            val cp = if (banner > 0.2) {
+                val cs = doubleArrayOf(0.172, 0.495, 0.825)
+                Array(3) { "%.2f".format(capsuleShare(bmp, cs[it])) }.joinToString(",")
+            } else "-"
+            diagLog("周回診断：banner=${"%.2f".format(banner)} ref=${"%.2f".format(ref)} ranks=[$rk] caps=[$cp]")
             // (v1.1 decides between the 3-card and 2-card layouts by
             // colour share; see the banner branch below.)
         }
@@ -2154,10 +2186,25 @@ class AdCloserService : AccessibilityService() {
             val share3 = if (ranks3.all { it > 0 }) info3.minOf { it.second } else 0.0
             val share2 = if (info2.all { it.first > 0 }) info2.minOf { it.second } else 0.0
             if (share3 > 0.0 && share3 >= share2) {
-                val best = maxOf(ranks3[0], ranks3[1], ranks3[2])
+                // v2.39 (user rule, decided 2026-11-14): capsule
+                // cards are the weakest, so they are NEVER picked
+                // while a non-capsule card is on offer — not even
+                // a red capsule. Only when all three are capsules
+                // does the usual colour priority decide among
+                // them. Always on; no settings switch.
+                val caps = DoubleArray(3) { capsuleShare(bmp, centers3[it]) }
+                val isCap = BooleanArray(3) { caps[it] >= 0.12 }
+                val capCount = isCap.count { it }
+                val pool = if (capCount in 1..2) {
+                    (0..2).filter { !isCap[it] }
+                } else {
+                    listOf(0, 1, 2)
+                }
+                val best = pool.maxOf { ranks3[it] }
                 val order = intArrayOf(1, 0, 2) // tie: middle, left, right
-                val pick = order.first { ranks3[it] == best }
+                val pick = order.first { it in pool && ranks3[it] == best }
                 val names = arrayOf("", "緑", "青", "紫", "黄", "赤")
+                val capsText = caps.joinToString(",") { "%.2f".format(it) }
                 // v2.7: the fingerprint gains an icon signature. The
                 // user's 2026-11-12 log showed the guard suppressing a
                 // selection screen after repeated (82%, 45%) taps —
@@ -2168,7 +2215,12 @@ class AdCloserService : AccessibilityService() {
                 // signature; new items, new fingerprint, fresh count.
                 val sig = centers3.joinToString("-") { iconSig(bmp, it) }
                 farmAct("ステータス強化", "sel:" + ranks3.joinToString(",") + ":" + sig) {
-                    LogStore.add(this, "周回：ステータス強化で「${names[best]}」を選択")
+                    val note = when (capCount) {
+                        3 -> "（全てカプセルのため色優先）"
+                        1, 2 -> "（カプセルを回避）"
+                        else -> ""
+                    }
+                    LogStore.add(this, "周回：ステータス強化で「${names[best]}」を選択$note caps=[$capsText]")
                     // Retry attempts shift the tap point (the victory
                     // branch's v1.2 lesson): stem centre, then the icon
                     // circle, then lower on the card.
