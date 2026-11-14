@@ -86,13 +86,14 @@ class MainActivity : Activity() {
             btnMethod.text = "Shizuku注入方式：" + when (Prefs.shizukuMethod(this)) {
                 1 -> "inputコマンド"
                 2 -> "直接注入＋微振動"
+                3 -> "タッチパネル直接"
                 else -> "直接注入"
             } + "（タップで切替）"
         }
         refreshMethodLabel()
         btnMethod.setOnClickListener {
             Prefs.setShizukuMethod(
-                this, (Prefs.shizukuMethod(this) + 1) % 3
+                this, (Prefs.shizukuMethod(this) + 1) % 4
             )
             refreshMethodLabel()
         }

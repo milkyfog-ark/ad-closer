@@ -9,5 +9,6 @@ interface IShizukuTap {
     void tap(int x, int y, int durationMs) = 1;
     String diag() = 2;
     void tapM(int method, int x, int y, int durationMs) = 3;
+    void setDisplaySize(int w, int h) = 4;
     void destroy() = 16777114;
 }

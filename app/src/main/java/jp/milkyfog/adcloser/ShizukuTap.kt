@@ -20,10 +20,27 @@ object ShizukuTap {
     private var binding = false
     private var lastBindAttemptAt = 0L
 
+    @Volatile
+    private var dispW = 0
+
+    @Volatile
+    private var dispH = 0
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             service = binder?.let { IShizukuTap.Stub.asInterface(it) }
             binding = false
+            // v2.62: the evdev method needs the display size
+            // to scale coordinates into the touchscreen's
+            // native range.
+            try {
+                if (dispW > 0 && dispH > 0) {
+                    service?.setDisplaySize(dispW, dispH)
+                }
+            } catch (t: Throwable) {
+                // Older service process; evdev falls back to
+                // this device's known display size.
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -55,6 +72,8 @@ object ShizukuTap {
     }
 
     fun ensureBound(ctx: Context) {
+        dispW = ctx.resources.displayMetrics.widthPixels
+        dispH = ctx.resources.displayMetrics.heightPixels
         if (service != null || binding) return
         if (!ready()) return
         val now = SystemClock.elapsedRealtime()
