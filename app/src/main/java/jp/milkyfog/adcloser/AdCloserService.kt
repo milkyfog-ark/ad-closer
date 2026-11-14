@@ -2063,16 +2063,26 @@ class AdCloserService : AccessibilityService() {
     }
 
     /**
-     * v2.35: the MEASURED centre of the roulette's lime 確認
-     * button in this screenshot. Scans the button's neighbourhood
-     * (x 0.50–0.95, y 0.55–0.70) for the detection green and
-     * returns the bounding-box centre as screen fractions; falls
-     * back to the classic fixed point (0.712, 0.624) when too few
+     * The roulette 確認 tap point, measured from this screenshot.
+     * v2.35 scanned the button's neighbourhood (x 0.50–0.95,
+     * y 0.55–0.70) for the detection green and tapped the
+     * bounding-box CENTRE — on the user's 2026-11-14 18:15 log
+     * that was (71%, 62%) on every attempt and the panel still
+     * never advanced; the user, watching the screen, reported a
+     * reaction on the スキップ checkbox and instructed: "押す
+     * 場所はもっと下です" (the place to press is further down).
+     * Offline measurement of that screenshot shows why the centre
+     * is suspect: the button's lime spans y 0.598–0.650 and its
+     * vertical middle band (y ≈0.612–0.636) is the 確認 glyph
+     * band — white strokes with near-black outlines — while the
+     * solid lime below the glyphs is y ≈0.640–0.650. v2.38
+     * therefore taps the LOWER part of the measured button:
+     * x = bbox centre, y = 82% down the bbox height (0.641 on
+     * that screenshot). Falls back to (0.712, 0.640) when too few
      * green pixels are found. The tap helpers log the fractions
-     * they are given, so every attempt records the measured
-     * position in the action log — no fixed-coordinate guessing.
+     * they are given, so every attempt records the exact point.
      */
-    private fun rouConfirmCentre(bmp: Bitmap): Pair<Double, Double> {
+    private fun rouConfirmPoint(bmp: Bitmap): Pair<Double, Double> {
         var minFx = Double.MAX_VALUE
         var maxFx = Double.MIN_VALUE
         var minFy = Double.MAX_VALUE
@@ -2094,8 +2104,8 @@ class AdCloserService : AccessibilityService() {
             }
             fx += 0.004
         }
-        if (hits < 30) return 0.712 to 0.624
-        return ((minFx + maxFx) / 2) to ((minFy + maxFy) / 2)
+        if (hits < 30) return 0.712 to 0.640
+        return ((minFx + maxFx) / 2) to (minFy + (maxFy - minFy) * 0.82)
     }
 
     private fun handleFarmBitmap(bmp: Bitmap) {
@@ -2271,13 +2281,16 @@ class AdCloserService : AccessibilityService() {
             // button), and 確認 simply means "fine as-is". The
             // v2.34 settle-wait built on that theory was dropped
             // before it ever shipped. What v2.35 does instead:
-            // no fixed coordinates at all — each attempt taps the
-            // MEASURED centre of the lime button in the current
-            // screenshot (rouConfirmCentre), rotating three plain
-            // press styles (tap / double tap / 500ms press), every
-            // ~4s, up to 15 attempts per panel instance; the tap
-            // helpers log the fractions used, so the position is
-            // verifiable from the log. As a hard guarantee,
+            // no fixed coordinates at all — each attempt taps a
+            // MEASURED point of the lime button in the current
+            // screenshot (rouConfirmPoint; v2.38: the lower part
+            // of the button, per the user's "press further down"
+            // instruction after the measured centre failed),
+            // rotating three plain press styles (tap / double tap
+            // / 500ms press), every ~4s, up to 15 attempts per
+            // panel instance; the tap helpers log the fractions
+            // used, so the position is verifiable from the log.
+            // As a hard guarantee,
             // panelBlocks() also refuses any point tap inside the
             // skip zone itself (see there). A panel instance is
             // identified by continuous presence: an absence of 15s
@@ -2292,7 +2305,7 @@ class AdCloserService : AccessibilityService() {
                 lastRouTapAt = 0L
             }
             lastRouSeenAt = t
-            val centre = rouConfirmCentre(bmp)
+            val centre = rouConfirmPoint(bmp)
             if (rouStreak < 15) {
                 if (t - lastRouTapAt >= 4_000) {
                     lastRouTapAt = t
