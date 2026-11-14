@@ -8,5 +8,6 @@ interface IShizukuTap {
     // destroy keeps Shizuku's conventional id.
     void tap(int x, int y, int durationMs) = 1;
     String diag() = 2;
+    void tapM(int method, int x, int y, int durationMs) = 3;
     void destroy() = 16777114;
 }

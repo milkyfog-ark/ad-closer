@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v2.59）"
+            android:text="広告クローザー（試作 v2.60）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -235,6 +235,14 @@
             android:layout_marginTop="8dp"
             android:text="Shizuku方式でタップ（実験：印なしの入力。ログウィズ等に必要）"
             android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/btnShizukuMethod"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="Shizuku注入方式：直接注入（タップで切替）"
+            android:textSize="14sp" />
 
         <TextView
             android:layout_width="match_parent"

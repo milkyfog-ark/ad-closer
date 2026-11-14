@@ -77,11 +77,17 @@ object ShizukuTap {
      * right now; the caller falls back to an accessibility
      * gesture for that beat.
      */
-    fun tap(ctx: Context, x: Int, y: Int, durationMs: Int): Boolean {
+    fun tap(
+        ctx: Context, x: Int, y: Int, durationMs: Int, method: Int = 0
+    ): Boolean {
         ensureBound(ctx)
         val svc = service ?: return false
         return try {
-            svc.tap(x, y, durationMs)
+            if (method == 0) {
+                svc.tap(x, y, durationMs)
+            } else {
+                svc.tapM(method, x, y, durationMs)
+            }
             true
         } catch (t: Throwable) {
             service = null

@@ -81,6 +81,21 @@ class MainActivity : Activity() {
             Prefs.setClickerShizuku(this, v)
             if (v) ShizukuTap.ensureBound(this)
         })
+        val btnMethod = findViewById<Button>(R.id.btnShizukuMethod)
+        fun refreshMethodLabel() {
+            btnMethod.text = "Shizuku注入方式：" + when (Prefs.shizukuMethod(this)) {
+                1 -> "inputコマンド"
+                2 -> "直接注入＋微振動"
+                else -> "直接注入"
+            } + "（タップで切替）"
+        }
+        refreshMethodLabel()
+        btnMethod.setOnClickListener {
+            Prefs.setShizukuMethod(
+                this, (Prefs.shizukuMethod(this) + 1) % 3
+            )
+            refreshMethodLabel()
+        }
         findViewById<Button>(R.id.btnShizuku).setOnClickListener {
             try {
                 when {

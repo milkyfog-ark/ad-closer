@@ -120,6 +120,20 @@ object Prefs {
         sp(ctx).getBoolean("clicker_shizuku", false)
     fun setClickerShizuku(ctx: Context, v: Boolean) =
         sp(ctx).edit().putBoolean("clicker_shizuku", v).apply()
+
+    /**
+     * Shizuku injection method (v2.60): 0 = direct injection
+     * with finger-shaped events, 1 = the shell's own `input`
+     * command, 2 = direct injection with a tiny mid-press
+     * move. ログウィズ takes taps on plain Android screens
+     * but not on its game canvas; the methods differ in how
+     * the events are built, and the log's 診断 line reports
+     * each method's outcome.
+     */
+    fun shizukuMethod(ctx: Context): Int =
+        sp(ctx).getInt("shizuku_method", 0)
+    fun setShizukuMethod(ctx: Context, v: Int) =
+        sp(ctx).edit().putInt("shizuku_method", v).apply()
     /**
      * Which rows the floating panel shows (v2.46, user request
      * 2026-11-15: the panel is too big — hide the rows for the

@@ -34,7 +34,22 @@ class ShizukuTapService : IShizukuTap.Stub {
     }
 
     override fun tap(x: Int, y: Int, durationMs: Int) {
-        if (injectTap(x, y, durationMs)) return
+        tapM(0, x, y, durationMs)
+    }
+
+    override fun tapM(method: Int, x: Int, y: Int, durationMs: Int) {
+        when (method) {
+            1 -> cmdTap(x, y, durationMs, chosen = true)
+            2 -> if (!injectTap(x, y, durationMs, jitter = true)) {
+                cmdTap(x, y, durationMs, chosen = false)
+            }
+            else -> if (!injectTap(x, y, durationMs, jitter = false)) {
+                cmdTap(x, y, durationMs, chosen = false)
+            }
+        }
+    }
+
+    private fun cmdTap(x: Int, y: Int, durationMs: Int, chosen: Boolean) {
         val why = diagInfo
         try {
             if (durationMs <= 50) {
@@ -51,9 +66,13 @@ class ShizukuTapService : IShizukuTap.Stub {
                     )
                 ).waitFor()
             }
-            diagInfo = "inputコマンド方式で送信（直接注入不可: $why）"
+            diagInfo = if (chosen) {
+                "inputコマンド方式で送信（方式として選択）"
+            } else {
+                "inputコマンド方式で送信（直接注入不可: $why）"
+            }
         } catch (t: Throwable) {
-            diagInfo = "両方式とも失敗（直接注入: $why）"
+            diagInfo = "inputコマンド方式も失敗（直接注入: $why）"
         }
     }
 
@@ -74,7 +93,9 @@ class ShizukuTapService : IShizukuTap.Stub {
         return -1
     }
 
-    private fun injectTap(x: Int, y: Int, durationMs: Int): Boolean {
+    private fun injectTap(
+        x: Int, y: Int, durationMs: Int, jitter: Boolean
+    ): Boolean {
         return try {
             val binder: IBinder =
                 SystemServiceHelper.getSystemService("input")
@@ -108,10 +129,10 @@ class ShizukuTapService : IShizukuTap.Stub {
                     toolType = MotionEvent.TOOL_TYPE_FINGER
                 }
             )
-            fun coords() = arrayOf(
+            fun coordsAt(cx: Int, cy: Int) = arrayOf(
                 MotionEvent.PointerCoords().apply {
-                    this.x = x.toFloat()
-                    this.y = y.toFloat()
+                    this.x = cx.toFloat()
+                    this.y = cy.toFloat()
                     pressure = 1f
                     size = 0.1f
                     touchMajor = 24f
@@ -122,7 +143,7 @@ class ShizukuTapService : IShizukuTap.Stub {
             val downTime = SystemClock.uptimeMillis()
             val down = MotionEvent.obtain(
                 downTime, downTime, MotionEvent.ACTION_DOWN, 1,
-                props, coords(), 0, 0, 1f, 1f,
+                props, coordsAt(x, y), 0, 0, 1f, 1f,
                 deviceId, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
             )
             val okDown = injectMethod.invoke(inputManager, down, 0) as Boolean
@@ -131,16 +152,39 @@ class ShizukuTapService : IShizukuTap.Stub {
                 diagInfo = "直接注入: DOWNがシステムに拒否されました"
                 return false
             }
-            if (durationMs > 0) SystemClock.sleep(durationMs.toLong())
+            if (jitter && durationMs >= 40) {
+                // Method 2: a real finger drifts a pixel or so
+                // mid-press; emit one MOVE the same way.
+                SystemClock.sleep((durationMs / 2).toLong())
+                val mv = MotionEvent.obtain(
+                    downTime, SystemClock.uptimeMillis(),
+                    MotionEvent.ACTION_MOVE, 1,
+                    props, coordsAt(x + 1, y), 0, 0, 1f, 1f,
+                    deviceId, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
+                )
+                runCatching {
+                    injectMethod.invoke(inputManager, mv, 0)
+                }
+                mv.recycle()
+                SystemClock.sleep((durationMs - durationMs / 2).toLong())
+            } else if (durationMs > 0) {
+                SystemClock.sleep(durationMs.toLong())
+            }
             val up = MotionEvent.obtain(
                 downTime, SystemClock.uptimeMillis(),
                 MotionEvent.ACTION_UP, 1,
-                props, coords(), 0, 0, 1f, 1f,
+                props, coordsAt(if (jitter) x + 1 else x, y),
+                0, 0, 1f, 1f,
                 deviceId, 0, InputDevice.SOURCE_TOUCHSCREEN, 0
             )
             val okUp = injectMethod.invoke(inputManager, up, 0) as Boolean
             up.recycle()
-            diagInfo = "直接注入で送信OK（宛先デバイス $deviceId）"
+            val devName = try {
+                InputDevice.getDevice(deviceId)?.name ?: "不明"
+            } catch (t: Throwable) {
+                "不明"
+            }
+            diagInfo = "直接注入で送信OK（宛先デバイス $deviceId: $devName）"
             okUp
         } catch (t: Throwable) {
             diagInfo =

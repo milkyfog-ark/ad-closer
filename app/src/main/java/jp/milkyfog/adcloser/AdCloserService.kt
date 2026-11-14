@@ -760,7 +760,8 @@ class AdCloserService : AccessibilityService() {
             if (Prefs.clickerShizuku(this@AdCloserService)) {
                 if (ShizukuTap.tap(
                         this@AdCloserService, x.toInt(), y.toInt(),
-                        Prefs.clickerPressMs(this@AdCloserService)
+                        Prefs.clickerPressMs(this@AdCloserService),
+                        Prefs.shizukuMethod(this@AdCloserService)
                     )
                 ) {
                     clickerBeats++
