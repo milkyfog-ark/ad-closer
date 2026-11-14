@@ -758,9 +758,25 @@ class AdCloserService : AccessibilityService() {
             // is synchronous and returns after the press; on any
             // failure we fall through to the gesture below.
             if (Prefs.clickerShizuku(this@AdCloserService)) {
+                // v2.61: humanise every Shizuku beat — a real
+                // finger never lands on the exact same pixel
+                // with the exact same press a hundred times in
+                // a row. ログウィズ took the first run of taps
+                // tonight and then stopped reacting for the
+                // rest of the session (twice, on two different
+                // engines); a pattern that perfect is the one
+                // thing every failing run shares. Vary the
+                // landing point (±4 px), the press (×0.7–1.3)
+                // and, below, the interval (×0.8–1.2) per beat.
+                val pressBase = Prefs.clickerPressMs(this@AdCloserService)
+                val pressVar = (pressBase *
+                    (0.7f + clickerRng.nextFloat() * 0.6f))
+                    .toInt().coerceIn(40, 500)
+                val jx = (x + (clickerRng.nextFloat() - 0.5f) * 8f).toInt()
+                val jy = (y + (clickerRng.nextFloat() - 0.5f) * 8f).toInt()
                 if (ShizukuTap.tap(
-                        this@AdCloserService, x.toInt(), y.toInt(),
-                        Prefs.clickerPressMs(this@AdCloserService),
+                        this@AdCloserService, jx, jy,
+                        pressVar,
                         Prefs.shizukuMethod(this@AdCloserService)
                     )
                 ) {
@@ -781,7 +797,12 @@ class AdCloserService : AccessibilityService() {
                             )
                         }
                     }
-                    clickerHandler.postDelayed(this, nextClickerDelayMs())
+                    clickerHandler.postDelayed(
+                        this,
+                        (nextClickerDelayMs() *
+                            (0.8f + clickerRng.nextFloat() * 0.4f))
+                            .toLong().coerceAtLeast(30)
+                    )
                     return
                 }
                 if (!clickerShizukuWarnLogged) {
