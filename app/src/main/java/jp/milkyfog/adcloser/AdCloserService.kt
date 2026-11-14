@@ -1,6 +1,7 @@
 package jp.milkyfog.adcloser
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityService.GestureResultCallback
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Bitmap
@@ -581,6 +582,18 @@ class AdCloserService : AccessibilityService() {
     // in seconds); only start / stop / auto-stop are.
     private var clickerLoopRunning = false
 
+    // v2.43 diagnostics: individual clicker taps were never
+    // logged and the dispatch result was never checked, so a
+    // silently failing (or silently skipped) clicker looked
+    // exactly like a working one — the user's 2026-11-14 23:56
+    // runs started fine in the log yet nothing visibly reacted.
+    // Count the beats per start, log the first and every 20th
+    // completed dispatch with its coordinates, log cancellations,
+    // and log the first skip of each kind per start.
+    private var clickerBeats = 0
+    private var clickerGuardSkipLogged = false
+    private var clickerPanelSkipLogged = false
+
     // Until this time the clicker must not dispatch: another gesture
     // (farm / ad closing) is in flight, and a clicker tap landing
     // mid-gesture cancels it (v2.6 — the user's 2026-11-12 log showed
@@ -611,6 +624,10 @@ class AdCloserService : AccessibilityService() {
             if (now() < gestureGuardUntil) {
                 // Another gesture is in flight; skip this beat rather
                 // than cancel it.
+                if (!clickerGuardSkipLogged) {
+                    clickerGuardSkipLogged = true
+                    LogStore.add(this@AdCloserService, "オートクリッカー：他の操作と重なったためクリックを見送りました")
+                }
                 handler.postDelayed(this, 100)
                 return
             }
@@ -623,6 +640,10 @@ class AdCloserService : AccessibilityService() {
                 val px = (screenW() * Prefs.clickerX(this@AdCloserService)).toInt()
                 val py = (screenH() * Prefs.clickerY(this@AdCloserService)).toInt()
                 if (rect.contains(px, py)) {
+                    if (!clickerPanelSkipLogged) {
+                        clickerPanelSkipLogged = true
+                        LogStore.add(this@AdCloserService, "オートクリッカー：マトがパネルに重なっているためクリックを見送りました")
+                    }
                     Control.blockedTapFx = Prefs.clickerX(this@AdCloserService)
                     Control.blockedTapFy = Prefs.clickerY(this@AdCloserService)
                     Control.panelNudgeAt = now()
@@ -641,7 +662,23 @@ class AdCloserService : AccessibilityService() {
                     )
                 )
                 .build()
-            dispatchGesture(gesture, null, null)
+            clickerBeats++
+            val beat = clickerBeats
+            dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(g: GestureDescription?) {
+                    if (beat == 1 || beat % 20 == 0) {
+                        LogStore.add(
+                            this@AdCloserService,
+                            "オートクリッカー：クリックを送信しました（${beat}回目、" +
+                                "${(fx * 100).toInt()}%、${(fy * 100).toInt()}%）"
+                        )
+                    }
+                }
+
+                override fun onCancelled(g: GestureDescription?) {
+                    LogStore.add(this@AdCloserService, "オートクリッカー：クリックがキャンセルされました")
+                }
+            }, null)
             handler.postDelayed(this, nextClickerDelayMs())
         }
     }
@@ -664,6 +701,9 @@ class AdCloserService : AccessibilityService() {
     private fun syncClicker() {
         if (Control.clickerOn && !clickerLoopRunning) {
             clickerLoopRunning = true
+            clickerBeats = 0
+            clickerGuardSkipLogged = false
+            clickerPanelSkipLogged = false
             handler.post(clickerRunnable)
             LogStore.add(this, "オートクリッカーを開始しました")
         } else if (!Control.clickerOn && clickerLoopRunning) {
