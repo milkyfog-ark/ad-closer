@@ -209,13 +209,14 @@ class AdCloserService : AccessibilityService() {
     // of timing them (see the keeper block for why).
     private var lastFarmNudgeAt = 0L
     private var x2MissingFrames = 0
-    // v2.33: keeper hardening — continuous-HUD stretch tracking
-    // (x2HudSince/x2HudLastAt) and the disarm-until-seen flag
-    // (x2TapDisarmed). See the keeper block for the failure these
-    // prevent.
-    private var x2HudSince = 0L
-    private var x2HudLastAt = 0L
-    private var x2TapDisarmed = false
+    // v2.37: keeper take four — time of the first counted "missing"
+    // frame of the current accumulation, the post-tap verify
+    // window, and the per-episode tap count. See the keeper block
+    // for why the v2.33 continuous-HUD stretch and the
+    // disarm-until-seen latch were dropped.
+    private var x2FirstMissingAt = 0L
+    private var x2VerifyUntil = 0L
+    private var x2EpisodeTaps = 0
     // When the last session ended in failure (v2.5 excursion watch).
     private var lastFailedSessionAt = 0L
 
@@ -2368,20 +2369,53 @@ class AdCloserService : AccessibilityService() {
                 // A frame that sees the x2 still resets the count
                 // (and re-arms), and a clearly-not-battle frame
                 // still resets it (below).
+                // Take four (v2.37): take three starved exactly
+                // like v2.11 did — with card picks every 5–13s
+                // and a 4.5s screenshot cooldown after each pick,
+                // battle frames arrive in bursts separated by
+                // >3s gaps, so the "continuous HUD" stretch
+                // restarted on every burst and the keeper never
+                // fired at all (user report 2026-11-14 18:13;
+                // detection re-measured fine on that day's
+                // screenshots: icon 0.28, label 0.26, strip 0.000
+                // absent / 0.096 present). Accumulate "missing"
+                // frames across bursts again (the speed setting
+                // persists across the selection overlay), but
+                // require >=4 counted frames SPANNING >=4s, so a
+                // momentary mis-read cannot fire a tap. After a
+                // tap, a 10s verify window pauses counting; if
+                // the x2 is still missing afterwards, counting
+                // resumes and ONE more tap is allowed (>=12s
+                // after the previous tap, at most 2 per missing
+                // episode). No permanent disarm: a mis-tap can be
+                // corrected by the second tap instead of latching
+                // the keeper off until the x2 happens to be seen
+                // again. Every counted frame is diag-logged with
+                // its readings, so a future mis-fire is
+                // diagnosable from the log alone.
                 val t = now()
-                if (t - x2HudLastAt > 3_000) x2HudSince = t
-                x2HudLastAt = t
                 if (x2Warm >= 0.03) {
                     x2MissingFrames = 0
-                    x2TapDisarmed = false
-                } else if (!x2TapDisarmed && t - x2HudSince >= 4_000) {
+                    x2FirstMissingAt = 0L
+                    x2EpisodeTaps = 0
+                } else if (t >= x2VerifyUntil && x2EpisodeTaps < 2) {
+                    if (x2MissingFrames == 0) x2FirstMissingAt = t
                     x2MissingFrames++
-                    if (x2MissingFrames >= 5 &&
-                        t - lastSpeedTapAt > 90_000
+                    diagLog(
+                        "周回診断：倍速 icon=${"%.2f".format(iconGreen)} " +
+                            "label=${"%.2f".format(labelWarm)} " +
+                            "strip=${"%.2f".format(x2Warm)} " +
+                            "missing=${x2MissingFrames}"
+                    )
+                    if (x2MissingFrames >= 4 &&
+                        t - x2FirstMissingAt >= 4_000 &&
+                        t - lastSpeedTapAt >= 12_000
                     ) {
                         lastSpeedTapAt = t
+                        x2EpisodeTaps++
                         x2MissingFrames = 0
-                        x2TapDisarmed = true
+                        x2FirstMissingAt = 0L
+                        x2VerifyUntil = t + 10_000
                         tap(0.082, 0.21, "周回：敵の移動速度アイコン（×2化）")
                     }
                 }
@@ -2390,6 +2424,7 @@ class AdCloserService : AccessibilityService() {
             // Clearly not the battle HUD (stage select, loading):
             // forget any accumulated "x2 missing" evidence.
             x2MissingFrames = 0
+            x2FirstMissingAt = 0L
         }
 
         // No known screen in this frame: the previous screen is gone, so
