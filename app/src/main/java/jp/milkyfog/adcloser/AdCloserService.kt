@@ -655,6 +655,7 @@ class AdCloserService : AccessibilityService() {
     // completed dispatch with its coordinates, log cancellations,
     // and log the first skip of each kind per start.
     private var clickerBeats = 0
+    private val clickerRng = java.util.Random()
     private var clickerGuardSkipLogged = false
     private var clickerPanelSkipLogged = false
 
@@ -719,12 +720,32 @@ class AdCloserService : AccessibilityService() {
             val fy = Prefs.clickerY(this@AdCloserService).toDouble()
             val x = (screenW() * fx).toFloat()
             val y = (screenH() * fy).toFloat()
+            // v2.52 experiment (finger-like tap): a real finger
+            // never produces a perfectly static, pixel-identical
+            // touch — it lands within a few px of the aim and
+            // drifts slightly between DOWN and UP, generating
+            // ACTION_MOVE events. ログウィズ ignores our static
+            // taps on its canvas buttons; with this switch on,
+            // each stroke starts within ±2px of the aim and
+            // drifts up to ±3px during the press.
+            val path = Path()
+            if (Prefs.clickerHumanTap(this@AdCloserService)) {
+                val sx = x + (clickerRng.nextInt(5) - 2)
+                val sy = y + (clickerRng.nextInt(5) - 2)
+                path.moveTo(sx, sy)
+                path.lineTo(
+                    sx + (clickerRng.nextInt(7) - 3),
+                    sy + (clickerRng.nextInt(7) - 3)
+                )
+            } else {
+                path.moveTo(x, y)
+            }
             // v2.44: press duration is user-adjustable (was a
             // fixed 30ms stroke, too short for some apps).
             val gesture = GestureDescription.Builder()
                 .addStroke(
                     GestureDescription.StrokeDescription(
-                        Path().apply { moveTo(x, y) }, 0,
+                        path, 0,
                         Prefs.clickerPressMs(this@AdCloserService).toLong()
                     )
                 )
@@ -780,7 +801,11 @@ class AdCloserService : AccessibilityService() {
             clickerGuardSkipLogged = false
             clickerPanelSkipLogged = false
             handler.post(clickerRunnable)
-            LogStore.add(this, "オートクリッカーを開始しました（1回押す長さ ${Prefs.clickerPressMs(this)} ms）")
+            LogStore.add(
+                this,
+                "オートクリッカーを開始しました（1回押す長さ ${Prefs.clickerPressMs(this)} ms）" +
+                    if (Prefs.clickerHumanTap(this)) "（指タップ実験ON）" else ""
+            )
         } else if (!Control.clickerOn && clickerLoopRunning) {
             clickerLoopRunning = false
             handler.removeCallbacks(clickerRunnable)

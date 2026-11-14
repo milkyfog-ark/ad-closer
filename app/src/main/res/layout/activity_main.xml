@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v2.51）"
+            android:text="広告クローザー（試作 v2.52）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -211,6 +211,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:max="49" />
+
+        <Switch
+            android:id="@+id/swClickerHuman"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="指に近いタップ（実験：微小な動きと位置のばらつきを付ける）"
+            android:textSize="15sp" />
 
         <TextView
             android:id="@+id/guardLabel"

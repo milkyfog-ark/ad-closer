@@ -75,6 +75,7 @@ class MainActivity : Activity() {
         bindSwitch(R.id.swPanelFarm, { Prefs.panelShowFarm(this) }, { Prefs.setPanelShowFarm(this, it) })
         bindSwitch(R.id.swPanelClicker, { Prefs.panelShowClicker(this) }, { Prefs.setPanelShowClicker(this, it) })
         bindSwitch(R.id.swPanelIcons, { Prefs.panelIconMode(this) }, { Prefs.setPanelIconMode(this, it) })
+        bindSwitch(R.id.swClickerHuman, { Prefs.clickerHumanTap(this) }, { Prefs.setClickerHumanTap(this, it) })
 
         val seek = findViewById<SeekBar>(R.id.seekGuard)
         seek.progress = Prefs.guardSeconds(this) - 10

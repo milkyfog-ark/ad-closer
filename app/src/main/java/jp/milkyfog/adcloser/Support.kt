@@ -89,6 +89,16 @@ object Prefs {
     fun setClickerPressMs(ctx: Context, v: Int) =
         sp(ctx).edit().putInt("clicker_press_ms", v).apply()
     /**
+     * Finger-like tap experiment (v2.52): each stroke starts
+     * within ±2px of the aim and drifts 1–3px during the press,
+     * generating ACTION_MOVE events like a real finger instead
+     * of a perfectly static, pixel-identical touch.
+     */
+    fun clickerHumanTap(ctx: Context): Boolean =
+        sp(ctx).getBoolean("clicker_human_tap", false)
+    fun setClickerHumanTap(ctx: Context, v: Boolean) =
+        sp(ctx).edit().putBoolean("clicker_human_tap", v).apply()
+    /**
      * Which rows the floating panel shows (v2.46, user request
      * 2026-11-15: the panel is too big — hide the rows for the
      * features not in use right now). 「全停止」 is not switchable;
