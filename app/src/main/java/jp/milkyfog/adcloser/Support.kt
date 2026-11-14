@@ -79,6 +79,15 @@ object Prefs {
     fun clickerLimitMinutes(ctx: Context): Int = sp(ctx).getInt("clicker_limit_min", 0)
     fun setClickerLimitMinutes(ctx: Context, v: Int) =
         sp(ctx).edit().putInt("clicker_limit_min", v).apply()
+    /**
+     * How long each clicker press is held, in ms (v2.44). The
+     * fixed 30ms stroke was too short for some apps to register
+     * (user diagnosis 2026-11-15: the clicks were dispatched but
+     * the target did not react), so it is adjustable 10–500ms.
+     */
+    fun clickerPressMs(ctx: Context): Int = sp(ctx).getInt("clicker_press_ms", 30)
+    fun setClickerPressMs(ctx: Context, v: Int) =
+        sp(ctx).edit().putInt("clicker_press_ms", v).apply()
     /** Target position as screen fractions (the marker's centre). */
     fun clickerX(ctx: Context): Float = sp(ctx).getFloat("clicker_x", 0.5f)
     fun clickerY(ctx: Context): Float = sp(ctx).getFloat("clicker_y", 0.5f)

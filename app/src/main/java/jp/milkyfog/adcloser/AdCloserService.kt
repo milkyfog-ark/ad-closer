@@ -655,10 +655,13 @@ class AdCloserService : AccessibilityService() {
             val fy = Prefs.clickerY(this@AdCloserService).toDouble()
             val x = (screenW() * fx).toFloat()
             val y = (screenH() * fy).toFloat()
+            // v2.44: press duration is user-adjustable (was a
+            // fixed 30ms stroke, too short for some apps).
             val gesture = GestureDescription.Builder()
                 .addStroke(
                     GestureDescription.StrokeDescription(
-                        Path().apply { moveTo(x, y) }, 0, 30
+                        Path().apply { moveTo(x, y) }, 0,
+                        Prefs.clickerPressMs(this@AdCloserService).toLong()
                     )
                 )
                 .build()

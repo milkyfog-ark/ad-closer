@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="広告クローザー（試作 v2.43）"
+            android:text="広告クローザー（試作 v2.44）"
             android:textSize="22sp"
             android:textStyle="bold" />
 
@@ -156,6 +156,19 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:max="60" />
+
+        <TextView
+            android:id="@+id/pressLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textSize="15sp" />
+
+        <SeekBar
+            android:id="@+id/seekPress"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:max="49" />
 
         <TextView
             android:id="@+id/guardLabel"

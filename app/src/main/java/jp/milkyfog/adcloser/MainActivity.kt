@@ -26,6 +26,7 @@ class MainActivity : Activity() {
     private lateinit var clickerLabel: TextView
     private lateinit var jitterLabel: TextView
     private lateinit var limitLabel: TextView
+    private lateinit var pressLabel: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -139,6 +140,22 @@ class MainActivity : Activity() {
             override fun onStopTrackingTouch(sb: SeekBar?) {}
         })
 
+        // v2.44: press-duration seekbar (10–500ms in 10ms steps).
+        pressLabel = findViewById(R.id.pressLabel)
+        val seekPress = findViewById<SeekBar>(R.id.seekPress)
+        seekPress.progress = ((Prefs.clickerPressMs(this) - 10) / 10).coerceIn(0, 49)
+        updatePressLabel()
+        seekPress.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                Prefs.setClickerPressMs(this@MainActivity, 10 + progress * 10)
+                updatePressLabel()
+            }
+
+            override fun onStartTrackingTouch(sb: SeekBar?) {}
+            override fun onStopTrackingTouch(sb: SeekBar?) {}
+        })
+
         findViewById<Button>(R.id.btnRefreshLog).setOnClickListener { refreshLog() }
         findViewById<Button>(R.id.btnClearLog).setOnClickListener {
             LogStore.clear(this)
@@ -198,6 +215,10 @@ class MainActivity : Activity() {
         } else {
             "自動停止：$m 分たったら自動で止まります"
         }
+    }
+
+    private fun updatePressLabel() {
+        pressLabel.text = "1回押す長さ：${Prefs.clickerPressMs(this)} ms（反応しないアプリには長めが有効）"
     }
 
     private fun isAccessibilityEnabled(): Boolean {
