@@ -43,6 +43,12 @@ class OverlayService : Service() {
     private var overlayHidden = false
     private var hideStartedAt = 0L
     private var markerWasVisible = false
+    // v2.54: the clicker run (clickerStartedAt) we already hid
+    // for. Hiding happens at most once per run — v2.53 re-hid
+    // immediately after the 60s restore because the run's start
+    // time never changes, leaving the user unable to stop the
+    // clicker (their report 2026-11-15).
+    private var hiddenForStartedAt = 0L
     private var armButton: Button? = null
     private var farmButton: Button? = null
     private var targetButton: Button? = null
@@ -78,6 +84,7 @@ class OverlayService : Service() {
             if (!overlayHidden && Control.clickerOn &&
                 Prefs.clickerHideOverlay(this@OverlayService) &&
                 Control.clickerStartedAt > 0 &&
+                Control.clickerStartedAt != hiddenForStartedAt &&
                 android.os.SystemClock.elapsedRealtime() - Control.clickerStartedAt > 1000
             ) {
                 hideOverlaysForExperiment()
@@ -261,6 +268,7 @@ class OverlayService : Service() {
         val wm = windowManager ?: return
         val view = rootView ?: return
         overlayHidden = true
+        hiddenForStartedAt = Control.clickerStartedAt
         hideStartedAt = android.os.SystemClock.elapsedRealtime()
         markerWasVisible = targetView != null
         if (markerWasVisible) hideTarget()
