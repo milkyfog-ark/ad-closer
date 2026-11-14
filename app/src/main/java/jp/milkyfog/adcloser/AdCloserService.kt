@@ -51,6 +51,15 @@ class AdCloserService : AccessibilityService() {
     }
 
     private val handler = Handler(Looper.getMainLooper())
+
+    // v2.56: the clicker loop runs on its own thread. Shizuku
+    // taps are synchronous IPC that block for the whole press
+    // duration; on the main thread they starved the floating
+    // panel, so at fast click rates its stop button could not
+    // be pressed (user report 2026-11-15).
+    private val clickerThread =
+        android.os.HandlerThread("clicker").apply { start() }
+    private val clickerHandler = Handler(clickerThread.looper)
     private var ticking = false
     private val tick = object : Runnable {
         override fun run() {
@@ -694,7 +703,7 @@ class AdCloserService : AccessibilityService() {
                     clickerGuardSkipLogged = true
                     LogStore.add(this@AdCloserService, "オートクリッカー：他の操作と重なったためクリックを見送りました")
                 }
-                handler.postDelayed(this, 100)
+                clickerHandler.postDelayed(this, 100)
                 return
             }
             // Never let the clicker press the floating panel's own
@@ -713,7 +722,7 @@ class AdCloserService : AccessibilityService() {
                     Control.blockedTapFx = Prefs.clickerX(this@AdCloserService)
                     Control.blockedTapFy = Prefs.clickerY(this@AdCloserService)
                     Control.panelNudgeAt = now()
-                    handler.postDelayed(this, 300)
+                    clickerHandler.postDelayed(this, 300)
                     return
                 }
             }
@@ -742,7 +751,7 @@ class AdCloserService : AccessibilityService() {
                                 "${(fx * 100).toInt()}%、${(fy * 100).toInt()}%、Shizuku）"
                         )
                     }
-                    handler.postDelayed(this, nextClickerDelayMs())
+                    clickerHandler.postDelayed(this, nextClickerDelayMs())
                     return
                 }
                 if (!clickerShizukuWarnLogged) {
@@ -800,7 +809,7 @@ class AdCloserService : AccessibilityService() {
                     LogStore.add(this@AdCloserService, "オートクリッカー：クリックがキャンセルされました")
                 }
             }, null)
-            handler.postDelayed(this, nextClickerDelayMs())
+            clickerHandler.postDelayed(this, nextClickerDelayMs())
         }
     }
 
@@ -835,7 +844,7 @@ class AdCloserService : AccessibilityService() {
             clickerPanelSkipLogged = false
             clickerShizukuWarnLogged = false
             if (Prefs.clickerShizuku(this)) ShizukuTap.ensureBound(this)
-            handler.post(clickerRunnable)
+            clickerHandler.post(clickerRunnable)
             LogStore.add(
                 this,
                 "オートクリッカーを開始しました（1回押す長さ ${Prefs.clickerPressMs(this)} ms）" +
@@ -847,7 +856,7 @@ class AdCloserService : AccessibilityService() {
             )
         } else if (!Control.clickerOn && clickerLoopRunning) {
             clickerLoopRunning = false
-            handler.removeCallbacks(clickerRunnable)
+            clickerHandler.removeCallbacks(clickerRunnable)
             LogStore.add(this, "オートクリッカーを終了しました")
         }
     }

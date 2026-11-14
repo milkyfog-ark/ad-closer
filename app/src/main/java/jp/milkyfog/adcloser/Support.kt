@@ -190,6 +190,8 @@ object LogStore {
     private fun sp(ctx: Context): SharedPreferences =
         ctx.getSharedPreferences("log", Context.MODE_PRIVATE)
 
+    // @Synchronized since v2.56: the clicker thread logs too.
+    @Synchronized
     fun add(ctx: Context, message: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.JAPAN).format(Date())
         val lines = all(ctx).toMutableList()

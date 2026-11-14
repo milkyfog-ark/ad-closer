@@ -29,8 +29,8 @@ android {
         applicationId = "jp.milkyfog.adcloser"
         minSdk = 26
         targetSdk = 34
-        versionCode = 76
-        versionName = "2.55.0"
+        versionCode = 77
+        versionName = "2.56.0"
     }
 
     signingConfigs {
