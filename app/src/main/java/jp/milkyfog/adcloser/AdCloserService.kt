@@ -965,12 +965,26 @@ class AdCloserService : AccessibilityService() {
         // excursion return, landing branch) already handle.
         val storeGateBounds = snap.boundsOf("ストアを開く")
         val storeGate = storeGateBounds != null
+        // v2.41: the lucky-wheel playable (user report 2026-11-14
+        // 18:58: "右上の×押してくれなかったです") exposes a lone
+        // "Go" and nothing else — and "Go" was only a survival
+        // signal for sessions ALREADY running, never a session
+        // START trigger, so when this ad opened without any other
+        // marker (and no ad-activity class hint) no session ever
+        // began and nothing could press its x. The x itself is
+        // covered: it measured (93.2%, 6.3%) on that screenshot
+        // (an earlier instance read (89.8%, 6.4%)), both within
+        // reach of the finisher's first sweep candidates. Start a
+        // session on the lone-"Go" screen (whole label, at most 3
+        // text nodes, so ordinary game screens cannot trip it)
+        // and let the existing survival + finisher machinery run.
+        val wheelGo = snap.hasExact("Go") && snap.texts.size <= 3
 
         if (!sessionActive) {
             if (Prefs.resident(this) &&
                 (rewardReady || endCard || closeInCorner || metaCard || welcomeCard ||
                     temuCreative || temuLanding || temuCard || storeGate || skipInCorner ||
-                    closeBottomLeft)
+                    closeBottomLeft || wheelGo)
             ) {
                 startSession(now(), "広告画面を検知")
             }
