@@ -56,6 +56,12 @@ class OverlayService : Service() {
     private var defBtnPadH = 0
     private var defBtnPadV = 0
     private var defTextColor = 0
+    // The close button has its own tighter padding; keep its
+    // defaults separate so text mode restores it exactly (v2.49).
+    private var defCloseTextSize = 0f
+    private var defCloseMinWidth = 0
+    private var defClosePadH = 0
+    private var defClosePadV = 0
     private var lastIconMode: Boolean? = null
     private var targetView: TargetView? = null
     private var targetParams: WindowManager.LayoutParams? = null
@@ -142,7 +148,7 @@ class OverlayService : Service() {
         val icon = Prefs.panelIconMode(this)
         applyHeaderLayout(icon)
         gripView?.text = if (icon) "✥" else "≡ 移動"
-        gripView?.textSize = if (icon) 16f else 12f
+        gripView?.textSize = if (icon) 18f else 12f
         stopButton?.text = if (icon) "⚠" else "全停止"
         if (icon) {
             val armed = Control.manualArmAt != 0L
@@ -163,20 +169,45 @@ class OverlayService : Service() {
         val density = resources.displayMetrics.density
         val padH = (8 * density).toInt()
         val padV = (4 * density).toInt()
-        for (b in listOfNotNull(
-            armButton, farmButton, targetButton, clickButton, stopButton
-        )) {
+        // v2.49: minWidth = 0 is NOT enough to slim the buttons —
+        // the platform button background enforces its own minimum
+        // width (the close button has minWidth 0 and 14px padding
+        // from birth, yet still rendered ~3 glyphs wide; user
+        // report 2026-11-15). Pin the layout width instead: 48dp
+        // in icon mode — one glyph, still finger-tappable.
+        val iconWidth = (48 * density).toInt()
+        fun styleBtn(b: Button, ts: Float, mw: Int, ph: Int, pv: Int) {
+            val lp = b.layoutParams as? LinearLayout.LayoutParams
             if (icon) {
                 b.minWidth = 0
                 b.setPadding(padH, padV, padH, padV)
                 b.textSize = 18f
+                if (lp != null) {
+                    lp.width = iconWidth
+                    b.layoutParams = lp
+                }
             } else {
-                b.minWidth = defBtnMinWidth
-                b.setPadding(defBtnPadH, defBtnPadV, defBtnPadH, defBtnPadV)
-                if (defBtnTextSize > 0f) {
-                    b.setTextSize(TypedValue.COMPLEX_UNIT_PX, defBtnTextSize)
+                b.minWidth = mw
+                b.setPadding(ph, pv, ph, pv)
+                if (ts > 0f) {
+                    b.setTextSize(TypedValue.COMPLEX_UNIT_PX, ts)
+                }
+                if (lp != null) {
+                    lp.width = LinearLayout.LayoutParams.WRAP_CONTENT
+                    b.layoutParams = lp
                 }
             }
+        }
+        for (b in listOfNotNull(
+            armButton, farmButton, targetButton, clickButton, stopButton
+        )) {
+            styleBtn(b, defBtnTextSize, defBtnMinWidth, defBtnPadH, defBtnPadV)
+        }
+        closeButton?.let {
+            styleBtn(
+                it, defCloseTextSize, defCloseMinWidth,
+                defClosePadH, defClosePadV
+            )
         }
     }
 
@@ -304,6 +335,12 @@ class OverlayService : Service() {
                 LogStore.add(this@OverlayService, "フローティングボタンを閉じました")
                 stopSelf()
             }
+        }
+        closeButton?.let {
+            defCloseTextSize = it.textSize
+            defCloseMinWidth = it.minWidth
+            defClosePadH = it.paddingLeft
+            defClosePadV = it.paddingTop
         }
         gripView = grip
         header.addView(grip)
