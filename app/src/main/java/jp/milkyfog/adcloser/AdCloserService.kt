@@ -884,6 +884,14 @@ class AdCloserService : AccessibilityService() {
 
     private fun evaluate() {
         syncClicker()
+        // v2.58: keep the Shizuku user service bound whenever
+        // the Shizuku tap switch is on, so pressing 連打開始
+        // never has to wait for the 1–2 s bind (the user
+        // rejected the start delay in v2.57). ensureBound is
+        // throttled and no-ops while connected, and this
+        // self-heals the connection if the helper process
+        // died (app update, system kill).
+        if (Prefs.clickerShizuku(this)) ShizukuTap.ensureBound(this)
         if (!Prefs.master(this)) return
 
         if (Control.emergencySuspend) {
