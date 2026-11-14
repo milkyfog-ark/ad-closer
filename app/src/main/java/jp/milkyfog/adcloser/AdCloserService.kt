@@ -1955,31 +1955,42 @@ class AdCloserService : AccessibilityService() {
     }
 
     /**
-     * Share of vivid-blue pixels in a card's icon box (v2.39).
-     * The capsule (錠剤) items carry a blue-and-white pill icon;
-     * measured on the user's 2026-11-14 screenshot with exactly
-     * this box (the iconSig box: cx±0.022, y 0.355–0.395): the
-     * two capsules read 0.31 / 0.22 and the angel icon between
-     * them 0.00, so a card counts as a capsule at >= 0.12. Other
-     * icon types (wing, bone, …) are not yet verified against
-     * this predicate, so every selection logs the three shares
-     * and the user can audit the calls from the log.
+     * Vivid-blue and near-white shares of a card's icon box
+     * (v2.39, predicate corrected in v2.40). The capsule (錠剤)
+     * icon is a blue-and-white pill. v2.39 keyed on the blue
+     * share alone (>= 0.12) and that misfires: measured on the
+     * user's own screenshots, the blue crystal （隕天の星） and
+     * the blue dagger blade （回転ダガー） also read high blue.
+     * What separates the pill is its white half. Dense sampling
+     * (step 0.0025) of the iconSig box (cx±0.022, y 0.355–0.395)
+     * over 17 measured icons:
+     *   pill    blue 0.25–0.37, white 0.11–0.30
+     *   crystal blue 0.25–0.51, white 0.02–0.05
+     *   dagger  blue 0.20–0.22, white 0.00
+     *   angel   blue 0.00–0.01, white 0.14–0.22
+     *   nitro   blue 0.06, white 0.00 / wing blue 0.00
+     * So a capsule is blue >= 0.12 AND white >= 0.08. Every
+     * selection logs both shares per card (caps=[blue/white,…])
+     * so the user can audit the calls from the log.
      */
-    private fun capsuleShare(bmp: Bitmap, cx: Double): Double {
-        var hit = 0
+    private fun capsuleShares(bmp: Bitmap, cx: Double): Pair<Double, Double> {
+        var blue = 0
+        var white = 0
         var total = 0
         var fx = cx - 0.022
         while (fx <= cx + 0.022) {
             var fy = 0.355
             while (fy <= 0.395) {
                 val h = hsvOf(bmp, fx, fy)
-                if (h[0] in 190f..225f && h[1] > 0.4f && h[2] > 0.4f) hit++
+                if (h[0] in 190f..225f && h[1] > 0.4f && h[2] > 0.4f) blue++
+                if (h[1] < 0.20f && h[2] > 0.80f) white++
                 total++
-                fy += 0.008
+                fy += 0.0025
             }
-            fx += 0.008
+            fx += 0.0025
         }
-        return if (total == 0) 0.0 else hit.toDouble() / total
+        if (total == 0) return 0.0 to 0.0
+        return (blue.toDouble() / total) to (white.toDouble() / total)
     }
 
     private fun cardRank(bmp: Bitmap, cx: Double): Int = cardRankShare(bmp, cx).first
@@ -2163,7 +2174,10 @@ class AdCloserService : AccessibilityService() {
             } else "-"
             val cp = if (banner > 0.2) {
                 val cs = doubleArrayOf(0.172, 0.495, 0.825)
-                Array(3) { "%.2f".format(capsuleShare(bmp, cs[it])) }.joinToString(",")
+                Array(3) {
+                    val s = capsuleShares(bmp, cs[it])
+                    "%.2f/%.2f".format(s.first, s.second)
+                }.joinToString(",")
             } else "-"
             diagLog("周回診断：banner=${"%.2f".format(banner)} ref=${"%.2f".format(ref)} ranks=[$rk] caps=[$cp]")
             // (v1.1 decides between the 3-card and 2-card layouts by
@@ -2186,14 +2200,39 @@ class AdCloserService : AccessibilityService() {
             val share3 = if (ranks3.all { it > 0 }) info3.minOf { it.second } else 0.0
             val share2 = if (info2.all { it.first > 0 }) info2.minOf { it.second } else 0.0
             if (share3 > 0.0 && share3 >= share2) {
+                // v2.40: if our own floating panel covers a card's
+                // icon, that icon's readings (rank AND capsule
+                // shares) are garbage — a covered card reads all
+                // zeroes, as in the user's 2026-11-12 screenshot.
+                // Evacuate the panel and wait for a clean frame
+                // instead of picking blind.
+                val panelRectSel = Control.panelRect
+                val coveredIdx = if (panelRectSel == null) -1 else
+                    centers3.indexOfFirst {
+                        panelRectSel.contains(
+                            (screenW() * it).toInt(), (screenH() * 0.375).toInt()
+                        )
+                    }
+                if (coveredIdx >= 0) {
+                    if (now() - lastFarmNudgeAt > 5_000) {
+                        lastFarmNudgeAt = now()
+                        Control.blockedTapFx = centers3[coveredIdx].toFloat()
+                        Control.blockedTapFy = 0.375f
+                        Control.panelNudgeAt = now()
+                        LogStore.add(this, "周回：パネルがカードのアイコンに重なっていたため退避します")
+                    }
+                    return
+                }
                 // v2.39 (user rule, decided 2026-11-14): capsule
                 // cards are the weakest, so they are NEVER picked
                 // while a non-capsule card is on offer — not even
                 // a red capsule. Only when all three are capsules
                 // does the usual colour priority decide among
                 // them. Always on; no settings switch.
-                val caps = DoubleArray(3) { capsuleShare(bmp, centers3[it]) }
-                val isCap = BooleanArray(3) { caps[it] >= 0.12 }
+                val caps = Array(3) { capsuleShares(bmp, centers3[it]) }
+                val isCap = BooleanArray(3) {
+                    caps[it].first >= 0.12 && caps[it].second >= 0.08
+                }
                 val capCount = isCap.count { it }
                 val pool = if (capCount in 1..2) {
                     (0..2).filter { !isCap[it] }
@@ -2204,7 +2243,9 @@ class AdCloserService : AccessibilityService() {
                 val order = intArrayOf(1, 0, 2) // tie: middle, left, right
                 val pick = order.first { it in pool && ranks3[it] == best }
                 val names = arrayOf("", "緑", "青", "紫", "黄", "赤")
-                val capsText = caps.joinToString(",") { "%.2f".format(it) }
+                val capsText = caps.joinToString(",") {
+                    "%.2f/%.2f".format(it.first, it.second)
+                }
                 // v2.7: the fingerprint gains an icon signature. The
                 // user's 2026-11-12 log showed the guard suppressing a
                 // selection screen after repeated (82%, 45%) taps —
