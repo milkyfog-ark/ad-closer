@@ -698,7 +698,15 @@ class AdCloserService : AccessibilityService() {
         } else {
             1.0
         }
-        return (base * factor).toLong().coerceAtLeast(20L)
+        val spaced = (base * factor).toLong().coerceAtLeast(20L)
+        // v2.45: never let the next beat fall due while the
+        // current press is still down. Dispatching a new gesture
+        // cancels the in-flight one (Android's rule), so with a
+        // long press (v2.44) at a fast rate every tap would be
+        // cancelled by its successor and no app would ever see a
+        // completed press. Guarantee press + 30ms of spacing.
+        val press = Prefs.clickerPressMs(this)
+        return maxOf(spaced, press + 30L)
     }
 
     private fun syncClicker() {
@@ -708,7 +716,7 @@ class AdCloserService : AccessibilityService() {
             clickerGuardSkipLogged = false
             clickerPanelSkipLogged = false
             handler.post(clickerRunnable)
-            LogStore.add(this, "オートクリッカーを開始しました")
+            LogStore.add(this, "オートクリッカーを開始しました（1回押す長さ ${Prefs.clickerPressMs(this)} ms）")
         } else if (!Control.clickerOn && clickerLoopRunning) {
             clickerLoopRunning = false
             handler.removeCallbacks(clickerRunnable)
